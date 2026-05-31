@@ -12,39 +12,33 @@
 //     2. Auth via shared_secret (matches settings.automation_runner_cron_secret
 //        for the recipe's agency)
 //     3. Mark the recipe as "running" (sets last_run_at to NOW())
-//     4. Resolve Composio credentials from settings (agency-scoped)
+//     4. Resolve Composio credentials (env-first, then settings table)
 //     5. Call the recipe's composio_action with input_config arguments
 //     6. If groq_prompt is set, post the result data through the
 //        Composio-hosted LLM (COMPOSIO_SEARCH_GROQ_CHAT) for structured
 //        extraction. NO separate Groq API key required — auth is via the
-//        existing composio_api_key.
+//        existing COMPOSIO_API_KEY.
 //     7. Write parsed records to the recipe's output_table per output_config
 //     8. Write a row to automation_run_log
 //     9. Update the recipe's last_run_status
 //    10. Telegram alert on failure (if Telegram creds present)
 //
-// PATTERN: Mirrors the Composio call shape in gmail-inbox-archiver and the
-//   auth/log/Telegram structure in linkedin-poster from the Imaginary Farms
-//   ops project. Same proven pattern, generalized over the recipe row, and
-//   adapted for the master template's settings table (key/value, scoped by
-//   agency_id) instead of the ops project's brand_kit table.
-//
-// CREDENTIALS REQUIRED IN public.settings (scoped by agency_id):
-//   automation_runner_cron_secret  - random secret, also referenced by mig 011
-//   composio_api_key               - Composio API key
-//   composio_user_id               - Composio user ID for this agency
-//   composio_<conn>_account_id     - one per connection used by recipes;
-//                                    e.g. composio_gmail_account_id,
-//                                    composio_facebook_account_id, etc.
-//   telegram_bot_token             - OPTIONAL; failure alerts only
-//   telegram_chat_id               - OPTIONAL; failure alerts only
+// CREDENTIALS:
+//   Edge Function Secrets (preferred, encrypted, shared across agencies):
+//     COMPOSIO_API_KEY               - Composio API key
+//   Per-agency settings table rows (overrides + per-agency identifiers):
+//     automation_runner_cron_secret  - random secret, also referenced by mig 011
+//     composio_api_key               - OPTIONAL per-agency override of env var
+//     composio_user_id               - Composio user ID for this agency
+//     composio_<conn>_account_id     - one per connection used by recipes;
+//                                      e.g. composio_gmail_account_id
+//     telegram_bot_token             - OPTIONAL; failure alerts only
+//     telegram_chat_id               - OPTIONAL; failure alerts only
 //
 // AUTH:
 //   verify_jwt = false
 //   POST body must contain shared_secret matching the agency's
-//   automation_runner_cron_secret in settings. Body must also contain a
-//   recipe_id; the function loads that recipe to resolve the agency_id
-//   used for the credential lookup.
+//   automation_runner_cron_secret in settings.
 // =========================================================================
 
 // deno-lint-ignore-file no-explicit-any
@@ -363,9 +357,16 @@ async function executeRecipe(
     }
 
     // --- Resolve credentials ---
-    const composioApiKey = await getSetting(agencyId, "composio_api_key");
+    // Prefer COMPOSIO_API_KEY Edge Function env var (shared infrastructure secret).
+    // Fall back to per-agency settings.composio_api_key for legacy/multi-tenant overrides.
+    const composioApiKey = Deno.env.get("COMPOSIO_API_KEY")
+      || await getSetting(agencyId, "composio_api_key");
     if (!composioApiKey) {
-      throw new Error(`Missing settings credential: composio_api_key (agency ${agencyId})`);
+      throw new Error(
+        `Missing Composio API key. Set COMPOSIO_API_KEY in Edge Function Secrets `
+        + `(Supabase Dashboard -> Edge Functions -> Secrets) or insert a `
+        + `settings.composio_api_key row for agency ${agencyId}.`
+      );
     }
     const composioUserId = await getSetting(agencyId, "composio_user_id");
     if (!composioUserId) {
