@@ -77,6 +77,21 @@ RULES:
 (10) Period from "RECAPITULATION OF AGENCY COMPENSATION ... FOR <PERIOD>":
    - 1-15 → period_half="first", recap_date = month\'s 15th
    - 16-end → period_half="second", recap_date = last day (28/29 Feb, 30/31 others)
+(11) OCR-misread guard for BENEFITS lines (MEDICAL INSURANCE CONTRIBUTION,
+    GROUP DENTAL INSURANCE CONTRIBUTION, DENTAL INSURANCE CONTRIBUTION, LIFE
+    INSURANCE CONTRIBUTION, AMBASSADOR TRAVEL benefits, INCOME UPDATE benefits):
+    a current_amount of 2.00 is almost always a 0.00 OCR misread. Set
+    current_amount = 0.00 when (a) the ytd_amount on this line equals the prior
+    recap\'s ytd for the same description (the deterministic post-processor
+    will verify this), or (b) the apparent current creates an unexplained
+    half-month spike that doesn\'t match the YTD delta. When in doubt, output
+    2.00 and the post-processor will correct.
+(12) AMBASSADOR TRAVEL disambiguation:
+    - "AMBASSADOR TRAVEL ALLOWANCE - <PRODUCT>" → BONUS (page 2, Awards & Bonuses)
+    - "AMBASSADOR TRAVEL - <PRODUCT>" (no "ALLOWANCE") → BENEFITS (page 3, Reportable Benefits)
+    Both can appear in the same recap as separate line items. They are NOT
+    duplicates. Section context (page 2 vs page 3) is the tiebreaker if the
+    description is otherwise identical after OCR cleanup.
 
 Return ONLY raw JSON: {agent_name, agent_code, territory, period_label, period_year,
 period_month, period_half, recap_date, totals{...}, ytd_federal_by_product{...},
@@ -135,6 +150,7 @@ Pattern → (comp_type, comp_category, is_aipp_eligible, is_scoreboard_eligible)
 | FIRE RENEWAL SERVICE | FIRE | renewal_service | true | false |
 | FIRE RENEWAL - AMD66 | FIRE | renewal_amd66 | true | false |
 | FIRE ALLIANCE RENEWAL | FIRE | alliance_renewal | true | false |
+| IPSI PET INSURANCE - RENEW | IPSI | pet_insurance_renewal | false | false |
 | IPSI PET INSURANCE | IPSI | pet_insurance_renewal | false | false |
 | GFA US BANK CREDIT CARD | GFA | us_bank_credit_card | false | false |
 | US BANK CREDIT CARD | GFA | us_bank_credit_card | false | false |
@@ -151,6 +167,41 @@ Pattern → (comp_type, comp_category, is_aipp_eligible, is_scoreboard_eligible)
 | AUTO NEW - AMD66 | MUTL | new_amd66 | true | true |
 | AUTO RENEWAL SERVICE | MUTL | renewal_service | true | false |
 | AUTO RENEWAL - AMD66 | MUTL | renewal_amd66 | true | false |
+
+---
+
+## Year-over-year evolutions (parser canon updates)
+
+The parser canon is updated whenever a previously-unseen line description appears
+in production SF recaps. Every new pattern lives in DESC_RULES; every new content
+quirk (OCR drift, missing column, etc.) lives in the PARSER_PROMPT RULES.
+
+**Discoveries logged during the 2025 historical backfill (closed 2026-06-08):**
+
+1. **AMBASSADOR TRAVEL benefits variants (page 3).** A 2025-09-30 recap first
+   surfaced "AMBASSADOR TRAVEL - HEALTH" ($963.20 YTD) and "AMBASSADOR TRAVEL -
+   LIFE" ($11,452.35 YTD) in the page-3 Reportable Benefits section, distinct
+   from the page-2 "AMBASSADOR TRAVEL ALLOWANCE - <product>" BONUS lines. Both
+   sets can coexist in the same recap. Disambiguation is now PARSER_PROMPT
+   rule (12) and the DESC_RULES table has explicit rows for both.
+
+2. **IPSI PET INSURANCE - RENEW (page 1).** A 2025-10-31 recap first surfaced
+   the explicit RENEW suffix on the IPSI pet insurance line (cur=ytd=$38.63,
+   frozen through year-end). DESC_RULES now matches the suffixed variant first
+   (most-specific) and falls back to the base "IPSI PET INSURANCE" pattern.
+
+3. **OCR 2.00-for-0.00 misread on BENEFITS lines.** A 2025-03-15 recap had
+   MEDICAL/DENTAL/LIFE INSURANCE CONTRIBUTION rows all reading "2.00" current
+   when the YTD was unchanged from the prior recap (Feb 28). Verified by
+   YTD-equals-prior-recap-YTD rule that the correct current was 0.00. Now
+   handled by PARSER_PROMPT rule (11) + deterministic post-processor (the
+   post-processor compares each BENEFITS line\'s ytd_amount to the prior
+   recap\'s YTD for the same description; if equal, current is forced to 0.00).
+
+**How to log a future discovery:** add the new DESC_RULES row (most-specific
+first), update the PARSER_PROMPT RULES if a new content rule is needed, and
+append a short bullet to this section with the recap_date that first surfaced
+the pattern.
 
 ---
 

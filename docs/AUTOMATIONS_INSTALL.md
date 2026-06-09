@@ -144,6 +144,24 @@ INSERT INTO automation_recipes (
 
 ### Recipe — SF Daily Comp Processor
 
+> **The `groq_prompt` shown below is a stub.** The full canonical parser prompt
+> (with all 12 RULES, DESC_RULES post-processing, and the deterministic
+> categorization layer) lives in `docs/SF_COMP_RECAP_PARSER.md`. When installing
+> this recipe in a real BCC, replace the stub string below with the canonical
+> prompt from that doc. The canonical prompt handles the year-over-year
+> evolutions logged there, including:
+>
+> - **AMBASSADOR TRAVEL benefit variants** (page 3 Reportable Benefits, distinct
+>   from page 2 "AMBASSADOR TRAVEL ALLOWANCE - X" bonus lines)
+> - **IPSI PET INSURANCE - RENEW** (explicit suffix variant on the IPSI line)
+> - **OCR 2.00-for-0.00 misread guard** on BENEFITS lines
+>   (MEDICAL/DENTAL/LIFE INSURANCE CONTRIBUTION)
+>
+> The deterministic DESC_RULES post-processing step must also be wired into the
+> recipe runner (either as a SQL `BEFORE INSERT` trigger on `comp_recap` or as a
+> second-pass INTERNAL recipe). See the "Live recipe wrapping" section of
+> `docs/SF_COMP_RECAP_PARSER.md` for the three implementation options.
+
 ```sql
 INSERT INTO automation_recipes (
   agency_id, recipe_name, recipe_description,
