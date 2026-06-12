@@ -7,21 +7,28 @@
 //     (b) manual call from the Automations module in the BCC web app via
 //         the run_automation_recipe(uuid) RPC.
 //
-//   For each invocation:
-//     1. Load the recipe row by recipe_id (resolves agency_id)
-//     2. Auth via shared_secret (matches settings.automation_runner_cron_secret
-//        for the recipe's agency)
-//     3. Mark the recipe as "running" (sets last_run_at to NOW())
-//     4. Resolve Composio credentials (env-first, then settings table)
-//     5. Call the recipe's composio_action with input_config arguments
-//     6. If groq_prompt is set, post the result data through the
-//        Composio-hosted LLM (COMPOSIO_SEARCH_GROQ_CHAT) for structured
-//        extraction. NO separate Groq API key required — auth is via the
-//        existing COMPOSIO_API_KEY.
-//     7. Write parsed records to the recipe's output_table per output_config
-//     8. Write a row to automation_run_log
-//     9. Update the recipe's last_run_status
-//    10. Telegram alert on failure (if Telegram creds present)
+// =========================================================================
+// 2026-06-12 REFACTOR — Resilient Composio auth resolution
+// =========================================================================
+// Composio v3 tools/execute accepts three auth-scoping patterns:
+//   1. user_id only                          → Composio auto-resolves the
+//                                              ACTIVE connection for the
+//                                              toolkit inferred from the tool
+//                                              slug. Survives reconnects.
+//   2. user_id + auth_config_id (ac_*)       → scoped to a stable integration
+//                                              template; survives OAuth
+//                                              refresh; auditable.
+//   3. user_id + connected_account_id (ca_*) → fully explicit but BRITTLE —
+//                                              ca_* rotates on every
+//                                              reconnect, breaking recipes.
+//
+// Precedence (most-explicit wins):
+//   connected_account_id  >  auth_config_id  >  user-only auto-resolution
+//
+// Settings lookups (all OPTIONAL — only required: composio_user_id):
+//   composio_<conn>_account_id      (legacy override, NOT recommended)
+//   composio_<conn>_auth_config_id  (preferred when explicit scoping is wanted)
+// =========================================================================
 //
 // CREDENTIALS:
 //   Edge Function Secrets (preferred, encrypted, shared across agencies):
@@ -29,9 +36,9 @@
 //   Per-agency settings table rows (overrides + per-agency identifiers):
 //     automation_runner_cron_secret  - random secret, also referenced by mig 011
 //     composio_api_key               - OPTIONAL per-agency override of env var
-//     composio_user_id               - Composio user ID for this agency
-//     composio_<conn>_account_id     - one per connection used by recipes;
-//                                      e.g. composio_gmail_account_id
+//     composio_user_id               - Composio user ID for this agency (REQUIRED)
+//     composio_<conn>_auth_config_id - OPTIONAL stable integration scope
+//     composio_<conn>_account_id     - OPTIONAL legacy explicit override
 //     telegram_bot_token             - OPTIONAL; failure alerts only
 //     telegram_chat_id               - OPTIONAL; failure alerts only
 //
@@ -52,8 +59,6 @@ const sb = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 });
 
 const COMPOSIO_BASE = "https://backend.composio.dev/api/v3/tools/execute";
-// LLM calls now route through Composio's hosted Groq chat tool.
-// Auth uses composio_api_key — NO separate groq_api_key needed.
 const COMPOSIO_LLM_TOOL = "COMPOSIO_SEARCH_GROQ_CHAT";
 const LLM_MODEL_DEFAULT = "llama-3.3-70b-versatile";
 
@@ -68,12 +73,6 @@ async function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-// --- helpers ------------------------------------------------------------
-
-/**
- * Read a credential from public.settings, scoped to the given agency.
- * Returns null if no row exists for that (agency_id, setting_key) pair.
- */
 async function getSetting(agencyId: string, key: string): Promise<string | null> {
   const { data, error } = await sb
     .from("settings")
@@ -88,7 +87,7 @@ async function getSetting(agencyId: string, key: string): Promise<string | null>
 }
 
 async function telegram(agencyId: string | null, text: string): Promise<void> {
-  if (!agencyId) return; // no agency context — can't look up creds
+  if (!agencyId) return;
   const botToken = await getSetting(agencyId, "telegram_bot_token");
   const chatId = await getSetting(agencyId, "telegram_chat_id");
   if (!botToken || !chatId) return;
@@ -116,18 +115,26 @@ function jsonResponse(body: any, status = 200): Response {
 async function callComposio(opts: {
   apiKey: string;
   userId: string;
-  connectedAccountId: string;
+  connectedAccountId?: string | null;
+  authConfigId?: string | null;
   toolSlug: string;
   toolArguments: Record<string, any>;
 }): Promise<{ ok: boolean; data: any; error: string | null; httpStatus: number }> {
+  // Build auth-scoping body. Precedence: ca_* (explicit) > ac_* (stable) > user-only.
+  const body: Record<string, any> = {
+    user_id: opts.userId,
+    arguments: opts.toolArguments,
+  };
+  if (opts.connectedAccountId) {
+    body.connected_account_id = opts.connectedAccountId;
+  } else if (opts.authConfigId) {
+    body.auth_config_id = opts.authConfigId;
+  }
+
   const res = await fetch(`${COMPOSIO_BASE}/${opts.toolSlug}`, {
     method: "POST",
     headers: { "x-api-key": opts.apiKey, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      user_id: opts.userId,
-      connected_account_id: opts.connectedAccountId,
-      arguments: opts.toolArguments,
-    }),
+    body: JSON.stringify(body),
   });
   const text = await res.text();
   let parsed: any = {};
@@ -148,10 +155,6 @@ async function callComposioLLM(opts: {
   model?: string;
   maxTokens?: number;
 }): Promise<{ ok: boolean; data: any; error: string | null }> {
-  // COMPOSIO_SEARCH_GROQ_CHAT is part of the composio_search toolkit
-  // (no separate auth/connection needed beyond composio_api_key).
-  // Schema does NOT expose response_format — system prompt MUST demand raw JSON
-  // and we MUST strip code fences before JSON.parse.
   const body = {
     user_id: opts.composioUserId,
     arguments: {
@@ -169,7 +172,6 @@ async function callComposioLLM(opts: {
     },
   };
 
-  // Retry on 429/5xx with exponential backoff, max 3 attempts.
   let lastErr = "unknown";
   for (let attempt = 0; attempt < 3; attempt++) {
     const res = await fetch(`${COMPOSIO_BASE}/${COMPOSIO_LLM_TOOL}`, {
@@ -218,27 +220,18 @@ async function callComposioLLM(opts: {
   return { ok: false, data: null, error: `LLM call exhausted retries: ${lastErr}` };
 }
 
-/**
- * Resolve the Composio connected_account_id for a given connection slug.
- * Recipes specify composio_connection like "gmail" or "facebook"; this maps
- * to the corresponding settings key for the given agency.
- */
-async function getComposioAccountId(agencyId: string, connection: string): Promise<string> {
+// Returns the legacy connected_account_id override if explicitly set. null otherwise.
+async function getComposioAccountId(agencyId: string, connection: string): Promise<string | null> {
   const key = `composio_${connection.toLowerCase()}_account_id`;
-  const v = await getSetting(agencyId, key);
-  if (!v) {
-    throw new Error(
-      `Missing settings credential: ${key} (agency ${agencyId}). The agent's Composio account for "${connection}" must be authorized and its account ID stored. See docs/AUTOMATIONS_INSTALL.md Step 3.`,
-    );
-  }
-  return v;
+  return await getSetting(agencyId, key);
 }
 
-/**
- * Write a parsed record array to the recipe's output_table, honoring
- * output_config.unique_on (column list for ON CONFLICT) and on_conflict
- * (update | ignore).
- */
+// Returns the stable auth_config_id (ac_*) for a toolkit. null if not set.
+async function getComposioAuthConfigId(agencyId: string, connection: string): Promise<string | null> {
+  const key = `composio_${connection.toLowerCase()}_auth_config_id`;
+  return await getSetting(agencyId, key);
+}
+
 async function writeOutput(opts: {
   outputTable: string;
   outputConfig: any;
@@ -249,9 +242,6 @@ async function writeOutput(opts: {
     return { inserted: 0, updated: 0 };
   }
 
-  // Stamp agency_id on every record if the table has the column and the recipe
-  // belongs to an agency. We let the actual insert fail if the column doesn't
-  // exist; that surfaces in the error_message in the run log.
   const records = opts.agencyId
     ? opts.records.map((r) => ({ agency_id: opts.agencyId, ...r }))
     : opts.records;
@@ -265,11 +255,10 @@ async function writeOutput(opts: {
       .upsert(records, { onConflict: uniqueOn.join(","), ignoreDuplicates: false })
       .select("id");
     if (error) throw new Error(`upsert to ${opts.outputTable} failed: ${error.message}`);
-    return { inserted: data?.length ?? 0, updated: 0 }; // Upsert doesn't distinguish
+    return { inserted: data?.length ?? 0, updated: 0 };
   }
 
   if (uniqueOn && uniqueOn.length > 0) {
-    // ignore-on-conflict
     const { data, error } = await sb
       .from(opts.outputTable)
       .upsert(records, { onConflict: uniqueOn.join(","), ignoreDuplicates: true })
@@ -278,7 +267,6 @@ async function writeOutput(opts: {
     return { inserted: data?.length ?? 0, updated: 0 };
   }
 
-  // No unique constraint specified — plain insert
   const { data, error } = await sb
     .from(opts.outputTable)
     .insert(records)
@@ -286,8 +274,6 @@ async function writeOutput(opts: {
   if (error) throw new Error(`insert to ${opts.outputTable} failed: ${error.message}`);
   return { inserted: data?.length ?? 0, updated: 0 };
 }
-
-// --- core executor ------------------------------------------------------
 
 async function executeRecipe(
   recipe: any,
@@ -297,8 +283,6 @@ async function executeRecipe(
   const recipeId = recipe.id as string;
   const agencyId = recipe.agency_id as string;
 
-  // Optimistic concurrency lock: stamp last_run_at so the next pg_cron tick
-  // won't re-fire this recipe in the same minute.
   await sb
     .from("automation_recipes")
     .update({ last_run_at: new Date().toISOString(), last_run_status: "running" })
@@ -310,12 +294,6 @@ async function executeRecipe(
   let outputSummary = "";
 
   try {
-    // --- INTERNAL recipe branch (no Composio call) ---
-    // For recipes whose composio_action is the literal string 'INTERNAL', the
-    // work happens entirely inside Postgres via the run_internal_recipe()
-    // function defined in migration 012. Used by GL Entry Writer, Monthly
-    // Close Monitor, Producer Underperformance Watcher, and any agency-
-    // specific INTERNAL recipes added later.
     if (recipe.composio_action === "INTERNAL") {
       const { data: internalResult, error: internalErr } = await sb.rpc(
         "run_internal_recipe",
@@ -324,12 +302,10 @@ async function executeRecipe(
       if (internalErr) {
         throw new Error(`run_internal_recipe failed: ${internalErr.message}`);
       }
-      // run_internal_recipe returns jsonb { records_processed, output_summary }
       recordsProcessed = (internalResult?.records_processed as number) ?? 0;
       outputSummary = (internalResult?.output_summary as string) ??
         `INTERNAL recipe completed (no summary returned)`;
 
-      // Write run log + update recipe status, then return early
       const durationSec = Math.round((Date.now() - started) / 1000);
       await sb.from("automation_run_log").insert({
         agency_id: agencyId,
@@ -373,26 +349,28 @@ async function executeRecipe(
       throw new Error(`Missing settings credential: composio_user_id (agency ${agencyId})`);
     }
 
+    // Resolve auth scoping (BOTH OPTIONAL). If neither is set, Composio
+    // auto-resolves the active connection from the user_id + the toolkit
+    // inferred from the tool slug. Recipe.composio_connection is now optional.
     const connection = recipe.composio_connection;
-    if (!connection) {
-      throw new Error(`Recipe ${recipe.recipe_name} has no composio_connection set.`);
+    let accountId: string | null = null;
+    let authConfigId: string | null = null;
+    if (connection) {
+      accountId = await getComposioAccountId(agencyId, connection);
+      authConfigId = await getComposioAuthConfigId(agencyId, connection);
     }
-    const accountId = await getComposioAccountId(agencyId, connection);
 
     const action = recipe.composio_action;
     if (!action) {
       throw new Error(`Recipe ${recipe.recipe_name} has no composio_action set.`);
     }
 
-    // --- Call Composio ---
     const inputConfig = recipe.input_config || {};
-    // input_config can include keys like gmail_query, attachment_required, etc.
-    // Recipes are responsible for using keys that map to the Composio tool's
-    // expected arguments. The runner passes them through as-is.
     const composioResult = await callComposio({
       apiKey: composioApiKey,
       userId: composioUserId,
       connectedAccountId: accountId,
+      authConfigId: authConfigId,
       toolSlug: action,
       toolArguments: inputConfig,
     });
@@ -403,11 +381,7 @@ async function executeRecipe(
 
     let parsedRecords: any[] = [];
 
-    // --- Optional: LLM parsing pass (via Composio-hosted Groq) ---
     if (recipe.groq_prompt && recipe.output_table) {
-      // Default expectation: composioResult.data is array-shaped or has a top-level
-      // collection (messages, items, results). Recipes that need a different shape
-      // can include extraction hints in groq_prompt.
       const inputForLLM = JSON.stringify(composioResult.data).slice(0, 60000);
       const llmResult = await callComposioLLM({
         composioApiKey,
@@ -421,11 +395,9 @@ async function executeRecipe(
       }
       parsedRecords = Array.isArray(llmResult.data?.records) ? llmResult.data.records : [];
     } else if (recipe.output_table && Array.isArray(composioResult.data)) {
-      // No LLM step — write raw composio data if it's already record-shaped
       parsedRecords = composioResult.data;
     }
 
-    // --- Write to output_table ---
     if (recipe.output_table && parsedRecords.length > 0) {
       const writeResult = await writeOutput({
         outputTable: recipe.output_table,
@@ -438,8 +410,6 @@ async function executeRecipe(
     } else if (recipe.output_table) {
       outputSummary = `0 records — Composio returned data but LLM parsing yielded no records to write`;
     } else {
-      // No output_table: this is an action-only recipe (e.g. send email,
-      // post to social, archive). Composio call success is the result.
       outputSummary = `Action ${action} executed successfully (no output_table)`;
       recordsProcessed = 1;
     }
@@ -455,7 +425,6 @@ async function executeRecipe(
 
   const durationSec = Math.round((Date.now() - started) / 1000);
 
-  // --- Write run log ---
   await sb.from("automation_run_log").insert({
     agency_id: agencyId,
     recipe_id: recipeId,
@@ -466,7 +435,6 @@ async function executeRecipe(
     output_summary: outputSummary,
   });
 
-  // --- Update recipe status ---
   await sb
     .from("automation_recipes")
     .update({ last_run_status: runStatus })
@@ -482,8 +450,6 @@ async function executeRecipe(
     error: errorMessage,
   };
 }
-
-// --- HTTP handler -------------------------------------------------------
 
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") {
@@ -508,11 +474,6 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "Missing shared_secret in body" }, 401);
   }
 
-  // Load the recipe to resolve agency_id, then auth against that agency's
-  // shared secret. Order matters: we cannot look up the secret without an
-  // agency_id, and we cannot trust the body's recipe_id without the secret —
-  // but the recipe row only contains a UUID + agency_id (no secrets), so
-  // reading it before auth leaks nothing.
   const { data: recipe, error: recipeErr } = await sb
     .from("automation_recipes")
     .select("*")
@@ -530,13 +491,12 @@ Deno.serve(async (req: Request) => {
     return jsonResponse(
       {
         error:
-          `Recipe ${recipeId} has no agency_id set. Every recipe must belong to an agency so its credentials can be resolved from settings.`,
+          `Recipe ${recipeId} has no agency_id set.`,
       },
       500,
     );
   }
 
-  // Auth — agency-scoped
   let expectedSecret: string | null;
   try {
     expectedSecret = await getSetting(recipe.agency_id, "automation_runner_cron_secret");
