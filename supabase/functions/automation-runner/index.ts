@@ -44,6 +44,23 @@
 // Reusable for: weekly reports, monthly close summaries, compliance digests,
 // producer underperformance alerts, anything that's "compute from DB,
 // then send via a third-party tool."
+//
+// =========================================================================
+// 2026-06-16 REFACTOR v5 — Multi-step orchestrators (internal_handler dispatch)
+// =========================================================================
+// When a recipe needs to call MULTIPLE Composio tools in a loop (fetch list,
+// per-item modify + download, drive upload, callback to a result_rpc), the
+// single-shot callComposio() path is insufficient. Such recipes set
+//   composio_action  -> nominal/primary tool (documentation; orchestrator picks)
+//   internal_handler -> orchestrator name (this is what executeRecipe dispatches on)
+//
+// Registered orchestrators:
+//   email_archiver_orchestrator -> runEmailArchiverOrchestrator()
+//
+// Adding a new orchestrator: implement runFooOrchestrator(recipe) returning
+// { recordsProcessed, outputSummary }, then add a branch in executeRecipe().
+// The outer try/catch around executeRecipe() handles failure logging.
+// =========================================================================
 // =========================================================================
 //
 // CREDENTIALS (unchanged):
@@ -260,6 +277,27 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
       };
     }
 
+    // v5: dispatch to a registered multi-step orchestrator. Each orchestrator
+    // owns its own Composio tool calls and returns aggregated metrics. The
+    // outer try/catch handles failure logging.
+    if (recipe.internal_handler === "email_archiver_orchestrator") {
+      const orchResult = await runEmailArchiverOrchestrator(recipe);
+      recordsProcessed = orchResult.recordsProcessed;
+      outputSummary = orchResult.outputSummary;
+      const durationSec = Math.round((Date.now() - started) / 1000);
+      await sb.from("automation_run_log").insert({
+        agency_id: agencyId, recipe_id: recipeId, status: "success",
+        records_processed: recordsProcessed, error_message: null,
+        duration_seconds: durationSec, output_summary: outputSummary,
+      });
+      await sb.from("automation_recipes").update({ last_run_status: "success" }).eq("id", recipeId);
+      return {
+        recipe_id: recipeId, recipe_name: recipe.recipe_name, status: "success",
+        records_processed: recordsProcessed, duration_seconds: durationSec,
+        triggered_by: triggeredBy, error: null,
+      };
+    }
+
     const composioApiKey = Deno.env.get("COMPOSIO_API_KEY") || await getSetting(agencyId, "composio_api_key");
     if (!composioApiKey) {
       throw new Error(
@@ -341,6 +379,305 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
     records_processed: recordsProcessed, duration_seconds: durationSec,
     triggered_by: triggeredBy, error: errorMessage,
   };
+}
+
+// =========================================================================
+// Multi-step orchestrators (v5)
+// =========================================================================
+
+async function ensureGmailLabelId(opts: {
+  apiKey: string; userId: string; accountId: string | null; authConfigId: string | null; labelName: string;
+}): Promise<string> {
+  const listRes = await callComposio({
+    apiKey: opts.apiKey, userId: opts.userId,
+    connectedAccountId: opts.accountId, authConfigId: opts.authConfigId,
+    toolSlug: "GMAIL_LIST_LABELS", toolArguments: {},
+  });
+  if (listRes.ok) {
+    const labels = listRes.data?.labels || listRes.data || [];
+    const arr = Array.isArray(labels) ? labels : (labels.labels || []);
+    const found = Array.isArray(arr) ? arr.find((l: any) => l && (l.name === opts.labelName)) : null;
+    if (found?.id) return found.id;
+  }
+  const createRes = await callComposio({
+    apiKey: opts.apiKey, userId: opts.userId,
+    connectedAccountId: opts.accountId, authConfigId: opts.authConfigId,
+    toolSlug: "GMAIL_CREATE_LABEL",
+    toolArguments: { label_name: opts.labelName, name: opts.labelName },
+  });
+  if (!createRes.ok) throw new Error(`GMAIL_CREATE_LABEL '${opts.labelName}' failed: ${createRes.error}`);
+  const id = createRes.data?.id || createRes.data?.label?.id;
+  if (!id) throw new Error(`GMAIL_CREATE_LABEL '${opts.labelName}' returned no id`);
+  return id;
+}
+
+async function findOrCreateDriveFolder(opts: {
+  apiKey: string; userId: string; accountId: string | null; authConfigId: string | null;
+  pathSegments: string[];
+}): Promise<{ folderId: string; folderPath: string }> {
+  let parentId: string | null = null;
+  for (const seg of opts.pathSegments) {
+    const findArgs: Record<string, any> = { name_exact: seg };
+    if (parentId) findArgs.parent_folder_id = parentId;
+    const findRes = await callComposio({
+      apiKey: opts.apiKey, userId: opts.userId,
+      connectedAccountId: opts.accountId, authConfigId: opts.authConfigId,
+      toolSlug: "GOOGLEDRIVE_FIND_FOLDER", toolArguments: findArgs,
+    });
+    let foundId: string | null = null;
+    if (findRes.ok) {
+      const d = findRes.data || {};
+      const candidates = d.files || d.items || d.folders || d.results || [];
+      if (Array.isArray(candidates) && candidates.length > 0) {
+        foundId = candidates[0].id || candidates[0].file_id || candidates[0].folder_id;
+      }
+    }
+    if (!foundId) {
+      const createArgs: Record<string, any> = { folder_name: seg, name: seg };
+      if (parentId) { createArgs.parent_id = parentId; createArgs.parent_folder_id = parentId; }
+      const createRes = await callComposio({
+        apiKey: opts.apiKey, userId: opts.userId,
+        connectedAccountId: opts.accountId, authConfigId: opts.authConfigId,
+        toolSlug: "GOOGLEDRIVE_CREATE_FOLDER", toolArguments: createArgs,
+      });
+      if (!createRes.ok) throw new Error(`GOOGLEDRIVE_CREATE_FOLDER for '${seg}' failed: ${createRes.error}`);
+      const d = createRes.data || {};
+      foundId = d.id || d.file_id || d.folder_id;
+      if (!foundId) throw new Error(`GOOGLEDRIVE_CREATE_FOLDER returned no id for '${seg}'`);
+    }
+    parentId = foundId;
+  }
+  return { folderId: parentId!, folderPath: opts.pathSegments.join("/") };
+}
+
+function resolveDriveFolderTemplate(template: string, tz: string, category: string): string[] {
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, year: "numeric", month: "2-digit" });
+  const parts: Record<string, string> = {};
+  for (const p of fmt.formatToParts(now)) parts[p.type] = p.value;
+  const year = parts.year || String(now.getUTCFullYear());
+  const month = parts.month || String(now.getUTCMonth() + 1).padStart(2, "0");
+  const resolved = template
+    .replace(/\{\{year\}\}/g, year)
+    .replace(/\{\{month\}\}/g, month)
+    .replace(/\{\{category\}\}/g, category);
+  return resolved.split("/").filter((s) => s.length > 0);
+}
+
+async function runEmailArchiverOrchestrator(recipe: any): Promise<{
+  recordsProcessed: number; outputSummary: string;
+}> {
+  const agencyId = recipe.agency_id as string;
+  const input = recipe.input_config || {};
+  const olderThanDays = Number(input.older_than_days ?? 30);
+  // Hard cap to keep us under the Edge Function timeout. The recipe row max_batch
+  // remains the *aspirational* batch size; we ceiling it here as a safety rail.
+  const maxBatch = Math.min(Number(input.max_batch ?? 100), 100);
+  const routeAttachments = input.route_attachments_to_drive !== false;
+  const preserveStarred = input.preserve_starred !== false;
+  const folderTemplate = input.drive_folder_template || "BCC/{{year}}/{{month}}/{{category}}";
+  const archiveLabelName = input.archive_label || "BCC/Archived";
+
+  const composioApiKey = Deno.env.get("COMPOSIO_API_KEY") || await getSetting(agencyId, "composio_api_key");
+  if (!composioApiKey) throw new Error("Missing Composio API key for email_archiver_orchestrator");
+  const composioUserId = await getSetting(agencyId, "composio_user_id");
+  if (!composioUserId) throw new Error("Missing settings.composio_user_id for email_archiver_orchestrator");
+  const gmailAccountId    = await getComposioAccountId(agencyId, "gmail");
+  const gmailAuthConfigId = await getComposioAuthConfigId(agencyId, "gmail");
+  const driveAccountId    = await getComposioAccountId(agencyId, "googledrive");
+  const driveAuthConfigId = await getComposioAuthConfigId(agencyId, "googledrive");
+
+  // 1. Plan: payload_rpc
+  const { data: plan, error: planErr } = await sb.rpc("prepare_email_archive_batch", {
+    p_agency_id: agencyId,
+    p_older_than_days: olderThanDays,
+    p_max_batch: maxBatch,
+  });
+  if (planErr) throw new Error(`prepare_email_archive_batch failed: ${planErr.message}`);
+  if (!plan || typeof plan !== "object") throw new Error("prepare_email_archive_batch returned no plan");
+  const gmailQuery: string = plan.gmail_query;
+  const dedupSet: Set<string> = new Set(Array.isArray(plan.dedup_message_ids) ? plan.dedup_message_ids : []);
+
+  // 2. Resolve archive label id and target Drive folder ONCE
+  const archiveLabelId = await ensureGmailLabelId({
+    apiKey: composioApiKey, userId: composioUserId,
+    accountId: gmailAccountId, authConfigId: gmailAuthConfigId,
+    labelName: archiveLabelName,
+  });
+
+  const tz = (await getSetting(agencyId, "agency_timezone")) || "America/New_York";
+  let driveFolderId: string | null = null;
+  let driveFolderPath = "";
+  if (routeAttachments) {
+    const segments = resolveDriveFolderTemplate(folderTemplate, tz, "email-archive");
+    const folder = await findOrCreateDriveFolder({
+      apiKey: composioApiKey, userId: composioUserId,
+      accountId: driveAccountId, authConfigId: driveAuthConfigId,
+      pathSegments: segments,
+    });
+    driveFolderId = folder.folderId;
+    driveFolderPath = folder.folderPath;
+  }
+
+  // 3. Fetch candidate message ids
+  const fetchRes = await callComposio({
+    apiKey: composioApiKey, userId: composioUserId,
+    connectedAccountId: gmailAccountId, authConfigId: gmailAuthConfigId,
+    toolSlug: "GMAIL_FETCH_EMAILS",
+    toolArguments: {
+      query: gmailQuery,
+      max_results: maxBatch,
+      ids_only: true,
+      verbose: false,
+    },
+  });
+  if (!fetchRes.ok) throw new Error(`GMAIL_FETCH_EMAILS failed: ${fetchRes.error}`);
+  const messages: any[] = (fetchRes.data?.messages) || (Array.isArray(fetchRes.data) ? fetchRes.data : []);
+  const candidateIds: string[] = messages
+    .map((m: any) => m?.messageId || m?.id)
+    .filter((id: any) => typeof id === "string" && id.length > 0 && !dedupSet.has(id))
+    .slice(0, maxBatch);
+
+  if (candidateIds.length === 0) {
+    return {
+      recordsProcessed: 0,
+      outputSummary: `No new messages to archive (query='${gmailQuery}'; ${dedupSet.size} dedup'd; ${messages.length} returned)`,
+    };
+  }
+
+  // 4. Per-message loop: fetch full -> check starred -> file attachments -> label
+  const archivedIds: string[] = [];
+  const attachmentsFiled: any[] = [];
+  const skipped: { id: string; reason: string }[] = [];
+
+  for (const msgId of candidateIds) {
+    try {
+      const msgRes = await callComposio({
+        apiKey: composioApiKey, userId: composioUserId,
+        connectedAccountId: gmailAccountId, authConfigId: gmailAuthConfigId,
+        toolSlug: "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
+        toolArguments: { message_id: msgId, format: routeAttachments ? "full" : "metadata" },
+      });
+      if (!msgRes.ok) { skipped.push({ id: msgId, reason: `fetch_full: ${msgRes.error}` }); continue; }
+      const msg: any = msgRes.data || {};
+
+      const labelIds: string[] = msg.labelIds || msg.label_ids || msg.payload?.labelIds || [];
+      const isStarred = labelIds.includes("STARRED");
+      if (preserveStarred && isStarred) { skipped.push({ id: msgId, reason: "preserve_starred" }); continue; }
+
+      let subject: string = msg.subject || "";
+      if (!subject && Array.isArray(msg.payload?.headers)) {
+        const h = msg.payload.headers.find((hh: any) => (hh.name || "").toLowerCase() === "subject");
+        subject = h?.value || "";
+      }
+
+      // Discover attachments (only when route_attachments_to_drive is on)
+      const attachments: { attachmentId: string; filename: string; mimeType: string }[] = [];
+      if (routeAttachments) {
+        const walk = (parts: any[]): void => {
+          for (const p of parts || []) {
+            if (p?.filename && p?.body?.attachmentId) {
+              attachments.push({
+                attachmentId: p.body.attachmentId,
+                filename: p.filename,
+                mimeType: p.mimeType || "application/octet-stream",
+              });
+            }
+            if (Array.isArray(p?.parts)) walk(p.parts);
+          }
+        };
+        walk(msg.payload?.parts || []);
+        if (attachments.length === 0 && Array.isArray(msg.attachmentList)) {
+          for (const a of msg.attachmentList) {
+            if (a?.attachmentId && a?.filename) {
+              attachments.push({
+                attachmentId: a.attachmentId,
+                filename: a.filename,
+                mimeType: a.mimeType || "application/octet-stream",
+              });
+            }
+          }
+        }
+      }
+
+      // Download + upload each attachment (best-effort, errors don't abort the message)
+      for (const att of attachments) {
+        try {
+          const getRes = await callComposio({
+            apiKey: composioApiKey, userId: composioUserId,
+            connectedAccountId: gmailAccountId, authConfigId: gmailAuthConfigId,
+            toolSlug: "GMAIL_GET_ATTACHMENT",
+            toolArguments: { message_id: msgId, attachment_id: att.attachmentId, file_name: att.filename },
+          });
+          if (!getRes.ok) { console.warn(`[email_archiver] GMAIL_GET_ATTACHMENT failed (${msgId}/${att.filename}): ${getRes.error}`); continue; }
+          const file = getRes.data?.file || getRes.data || {};
+          const s3url = file.s3url || file.url;
+          if (!s3url) { console.warn(`[email_archiver] no s3url for ${msgId}/${att.filename}`); continue; }
+          const uploadArgs: Record<string, any> = {
+            source_url: s3url,
+            name: att.filename,
+            mime_type: file.mimetype || att.mimeType,
+          };
+          if (driveFolderId) uploadArgs.parent_folder_id = driveFolderId;
+          const uploadRes = await callComposio({
+            apiKey: composioApiKey, userId: composioUserId,
+            connectedAccountId: driveAccountId, authConfigId: driveAuthConfigId,
+            toolSlug: "GOOGLEDRIVE_UPLOAD_FROM_URL",
+            toolArguments: uploadArgs,
+          });
+          if (!uploadRes.ok) { console.warn(`[email_archiver] GOOGLEDRIVE_UPLOAD_FROM_URL failed for ${att.filename}: ${uploadRes.error}`); continue; }
+          const driveFile = uploadRes.data || {};
+          const driveFileId: string | null = driveFile.id || driveFile.file_id || driveFile.fileId || null;
+          if (!driveFileId) { console.warn(`[email_archiver] upload returned no id for ${att.filename}`); continue; }
+          const driveUrl: string = driveFile.webViewLink || driveFile.url
+            || `https://drive.google.com/file/d/${driveFileId}/view`;
+          attachmentsFiled.push({
+            message_id: msgId,
+            subject,
+            file_name: att.filename,
+            file_type: file.mimetype || att.mimeType,
+            drive_file_id: driveFileId,
+            drive_url: driveUrl,
+          });
+        } catch (attErr) {
+          console.warn(`[email_archiver] attachment crash (${msgId}/${att.filename}): ${attErr instanceof Error ? attErr.message : attErr}`);
+        }
+      }
+
+      // Apply archive label + remove INBOX (the actual "archive" action)
+      const labelRes = await callComposio({
+        apiKey: composioApiKey, userId: composioUserId,
+        connectedAccountId: gmailAccountId, authConfigId: gmailAuthConfigId,
+        toolSlug: "GMAIL_ADD_LABEL_TO_EMAIL",
+        toolArguments: {
+          message_id: msgId,
+          add_label_ids: [archiveLabelId],
+          remove_label_ids: ["INBOX"],
+        },
+      });
+      if (!labelRes.ok) { skipped.push({ id: msgId, reason: `label_modify: ${labelRes.error}` }); continue; }
+      archivedIds.push(msgId);
+    } catch (loopErr) {
+      skipped.push({ id: msgId, reason: `loop_crash: ${loopErr instanceof Error ? loopErr.message : loopErr}` });
+    }
+  }
+
+  // 5. Callback to result_rpc
+  const { data: logResult, error: logErr } = await sb.rpc("log_email_archive_result", {
+    p_agency_id: agencyId,
+    p_recipe_id: recipe.id,
+    p_result: { archived_message_ids: archivedIds, attachments_filed: attachmentsFiled },
+  });
+  if (logErr) throw new Error(`log_email_archive_result failed: ${logErr.message}`);
+
+  if (skipped.length > 0) {
+    console.warn(`[email_archiver] skipped detail (first 10): ${JSON.stringify(skipped.slice(0, 10))}`);
+  }
+
+  const driveDesc = routeAttachments ? `Drive: ${driveFolderPath}` : "Drive routing disabled";
+  const fallback = `${archivedIds.length} archived; ${attachmentsFiled.length} attachments filed (${driveDesc}); ${skipped.length} skipped; ${dedupSet.size} dedup'd`;
+  const outputSummary = (logResult?.output_summary as string) || fallback;
+  return { recordsProcessed: archivedIds.length, outputSummary };
 }
 
 Deno.serve(async (req: Request) => {
