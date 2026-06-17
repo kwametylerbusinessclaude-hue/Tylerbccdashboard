@@ -1,0 +1,386 @@
+{
+  "_doc": "DESC_RULES \u2014 substring-match deterministic categorisation table for SF Compensation Recap line items. Port of scripts/parsers/sf_comp_recap.py DESC_RULES. Order is significant: most-specific patterns FIRST. The Edge Function v7+ has an inline TS copy in supabase/functions/automation-runner/index.ts; this JSON is the canonical source. scripts/parsers/export_desc_rules.py regenerates this file from the Python source. Fields: pattern (description substring, uppercase), comp_type, comp_category, is_aipp_eligible, is_scoreboard_eligible.",
+  "_version": "2026-06-17",
+  "_source": "scripts/parsers/sf_comp_recap.py",
+  "_rule_count": 54,
+  "rules": [
+    {
+      "pattern": "STD AUTO AIPP PAYMENT",
+      "comp_type": "AIPP",
+      "comp_category": "std_auto_aipp",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "AUTO AIPP PAYMENT",
+      "comp_type": "AIPP",
+      "comp_category": "auto_aipp",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "HEALTH AIPP PAYMENT",
+      "comp_type": "AIPP",
+      "comp_category": "health_aipp",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "FIRE AIPP PAYMENT",
+      "comp_type": "AIPP",
+      "comp_category": "fire_aipp",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "LIFE AIPP PAYMENT",
+      "comp_type": "AIPP",
+      "comp_category": "life_aipp",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "SCORECARD BONUS - AUTO",
+      "comp_type": "BONUS",
+      "comp_category": "scorecard_auto",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "SCORECARD BONUS - FIRE",
+      "comp_type": "BONUS",
+      "comp_category": "scorecard_fire",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "SCORECARD BONUS - HEALTH",
+      "comp_type": "BONUS",
+      "comp_category": "scorecard_health",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "SCORECARD BONUS - LIFE",
+      "comp_type": "BONUS",
+      "comp_category": "scorecard_life",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "CASH AWARD - LIFE",
+      "comp_type": "BONUS",
+      "comp_category": "cash_award_life",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "CASH AWARD - AUTO",
+      "comp_type": "BONUS",
+      "comp_category": "cash_award_auto",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "AMBASSADOR TRAVEL ALLOWANCE - HEALTH",
+      "comp_type": "BONUS",
+      "comp_category": "ambassador_travel_health",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "AMBASSADOR TRAVEL ALLOWANCE - LIFE",
+      "comp_type": "BONUS",
+      "comp_category": "ambassador_travel_life",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "AMBASSADOR TRAVEL ALLOWANCE - AUTO",
+      "comp_type": "BONUS",
+      "comp_category": "ambassador_travel_auto",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "AMBASSADOR TRAVEL ALLOWANCE - FIRE",
+      "comp_type": "BONUS",
+      "comp_category": "ambassador_travel_fire",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "S & T COMPANY CONTRIBUTION - AUTO",
+      "comp_type": "OTHER_INCOME",
+      "comp_category": "s_t_contribution_auto",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "S & T COMPANY CONTRIBUTION - FIRE",
+      "comp_type": "OTHER_INCOME",
+      "comp_category": "s_t_contribution_fire",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "S & T COMPANY CONTRIBUTION - LIFE",
+      "comp_type": "OTHER_INCOME",
+      "comp_category": "s_t_contribution_life",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "S & T COMPANY CONTRIBUTION - HEALTH",
+      "comp_type": "OTHER_INCOME",
+      "comp_category": "s_t_contribution_health",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "MARKETING ALLOWANCE",
+      "comp_type": "OTHER_INCOME",
+      "comp_category": "marketing_allowance",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "MEDICAL INSURANCE CONTRIBUTION",
+      "comp_type": "BENEFITS",
+      "comp_category": "medical_insurance",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "GROUP DENTAL INSURANCE CONTRIBUTION",
+      "comp_type": "BENEFITS",
+      "comp_category": "dental_insurance",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "DENTAL INSURANCE CONTRIBUTION",
+      "comp_type": "BENEFITS",
+      "comp_category": "dental_insurance",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "LIFE INSURANCE CONTRIBUTION",
+      "comp_type": "BENEFITS",
+      "comp_category": "life_insurance_benefit",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "INCOME UPDATE-PREV AWARDED-AUTO",
+      "comp_type": "BENEFITS",
+      "comp_category": "income_update_auto",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "INCOME UPDATE-PREV AWARDED-LIFE",
+      "comp_type": "BENEFITS",
+      "comp_category": "income_update_life",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "INCOME UPDATE-PREV AWARDED-FIRE",
+      "comp_type": "BENEFITS",
+      "comp_category": "income_update_fire",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "INCOME UPDATE-PREV AWARDED-HEALTH",
+      "comp_type": "BENEFITS",
+      "comp_category": "income_update_health",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "STD AUTO NEW BUSINESS",
+      "comp_type": "STDAUTO",
+      "comp_category": "new_business",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": true
+    },
+    {
+      "pattern": "STD AUTO NEW - AMD66",
+      "comp_type": "STDAUTO",
+      "comp_category": "new_amd66",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": true
+    },
+    {
+      "pattern": "STD AUTO RENEWAL SERVICE",
+      "comp_type": "STDAUTO",
+      "comp_category": "renewal_service",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "STD AUTO RENEWAL - AMD66",
+      "comp_type": "STDAUTO",
+      "comp_category": "renewal_amd66",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "FIRE NEW BUSINESS",
+      "comp_type": "FIRE",
+      "comp_category": "new_business",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": true
+    },
+    {
+      "pattern": "FIRE NEW - AMD66",
+      "comp_type": "FIRE",
+      "comp_category": "new_amd66",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": true
+    },
+    {
+      "pattern": "FIRE RENEWAL SERVICE",
+      "comp_type": "FIRE",
+      "comp_category": "renewal_service",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "FIRE RENEWAL - AMD66",
+      "comp_type": "FIRE",
+      "comp_category": "renewal_amd66",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "FIRE ALLIANCE RENEWAL",
+      "comp_type": "FIRE",
+      "comp_category": "alliance_renewal",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "IPSI PET INSURANCE - RENEW",
+      "comp_type": "IPSI",
+      "comp_category": "pet_insurance_renewal",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "IPSI PET INSURANCE",
+      "comp_type": "IPSI",
+      "comp_category": "pet_insurance_renewal",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "GFA US BANK CREDIT CARD",
+      "comp_type": "GFA",
+      "comp_category": "us_bank_credit_card",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "US BANK CREDIT CARD",
+      "comp_type": "GFA",
+      "comp_category": "us_bank_credit_card",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "FIRST YEAR WRITING",
+      "comp_type": "SFL",
+      "comp_category": "first_year_writing",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": true
+    },
+    {
+      "pattern": "RENEWAL WRITING",
+      "comp_type": "SFL",
+      "comp_category": "renewal_writing",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "SERVICING",
+      "comp_type": "SFL",
+      "comp_category": "servicing",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "AMBASSADOR TRAVEL - HEALTH",
+      "comp_type": "BENEFITS",
+      "comp_category": "ambassador_travel_health",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "AMBASSADOR TRAVEL - LIFE",
+      "comp_type": "BENEFITS",
+      "comp_category": "ambassador_travel_life",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "AMBASSADOR TRAVEL - AUTO",
+      "comp_type": "BENEFITS",
+      "comp_category": "ambassador_travel_auto",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "AMBASSADOR TRAVEL - FIRE",
+      "comp_type": "BENEFITS",
+      "comp_category": "ambassador_travel_fire",
+      "is_aipp_eligible": false,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "HEALTH NEW BUSINESS",
+      "comp_type": "MUTL",
+      "comp_category": "new_business",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": true
+    },
+    {
+      "pattern": "HEALTH RENEWAL SERVICE",
+      "comp_type": "MUTL",
+      "comp_category": "renewal_service",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "AUTO NEW BUSINESS",
+      "comp_type": "MUTL",
+      "comp_category": "new_business",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": true
+    },
+    {
+      "pattern": "AUTO NEW - AMD66",
+      "comp_type": "MUTL",
+      "comp_category": "new_amd66",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": true
+    },
+    {
+      "pattern": "AUTO RENEWAL SERVICE",
+      "comp_type": "MUTL",
+      "comp_category": "renewal_service",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": false
+    },
+    {
+      "pattern": "AUTO RENEWAL - AMD66",
+      "comp_type": "MUTL",
+      "comp_category": "renewal_amd66",
+      "is_aipp_eligible": true,
+      "is_scoreboard_eligible": false
+    }
+  ]
+}
