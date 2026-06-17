@@ -10,7 +10,7 @@
 // =========================================================================
 // 2026-06-12 REFACTOR v3 — Resilient Composio auth resolution
 // =========================================================================
-// Composio v3 tools/execute accepts three auth-scoping patterns:
+// (history preserved from v3-v5 below)
 //   1. user_id only                          → Composio auto-resolves the
 //                                              ACTIVE connection for the
 //                                              toolkit inferred from the tool
@@ -31,36 +31,29 @@
 // Any recipe can specify input_config.payload_rpc = 'fn_name' to delegate
 // computation of the Composio arguments to a Postgres function.
 //
-//   - The Edge Function calls sb.rpc(fn_name, { p_agency_id, p_tz }) BEFORE
-//     invoking Composio.
-//   - The RPC return value (a jsonb object) BECOMES the Composio arguments,
-//     replacing input_config entirely (except for the meta fields like
-//     payload_rpc and tz, which are stripped before sending).
-//
-// Use case: recipes whose Composio arguments need to be computed from live DB
-// state (e.g. Daily Briefing pulls revenue, alerts, compliance items, etc.
-// from across the agency tables and renders an HTML email body).
-//
-// Reusable for: weekly reports, monthly close summaries, compliance digests,
-// producer underperformance alerts, anything that's "compute from DB,
-// then send via a third-party tool."
-//
 // =========================================================================
 // 2026-06-16 REFACTOR v5 — Multi-step orchestrators (internal_handler dispatch)
 // =========================================================================
-// When a recipe needs to call MULTIPLE Composio tools in a loop (fetch list,
-// per-item modify + download, drive upload, callback to a result_rpc), the
-// single-shot callComposio() path is insufficient. Such recipes set
-//   composio_action  -> nominal/primary tool (documentation; orchestrator picks)
-//   internal_handler -> orchestrator name (this is what executeRecipe dispatches on)
-//
 // Registered orchestrators:
 //   email_archiver_orchestrator -> runEmailArchiverOrchestrator()
 //
-// Adding a new orchestrator: implement runFooOrchestrator(recipe) returning
-// { recordsProcessed, outputSummary }, then add a branch in executeRecipe().
-// The outer try/catch around executeRecipe() handles failure logging.
 // =========================================================================
+// 2026-06-17 REFACTOR v6 — Document Processor orchestrator
+// =========================================================================
+// Added runDocumentProcessorOrchestrator(). Polls Gmail for SF + Paychex
+// PDFs, classifies by filename/subject regex, files each to the appropriate
+// Drive folder, inserts a documents row, and (for Comp Recap / Payroll /
+// Deduction Stmt) fires an alert flagging the doc for downstream ingestion.
+//
+// v6 SCOPE — DETECT + FILE + ALERT:
+// The orchestrator does NOT yet run the LLM-driven parse for SF Comp Recap.
+// That stays as the manual backstop (scripts/parsers/sf_comp_recap.py) until
+// a multimodal LLM tool slug is confirmed in Composio (task e55d92f8 step 1).
+// v7 will add the in-Edge-Function parse leg and wire sf_comp_recap_ingest.
+//
+// Registered orchestrators after this commit:
+//   email_archiver_orchestrator    -> runEmailArchiverOrchestrator()
+//   document_processor_orchestrator -> runDocumentProcessorOrchestrator()
 // =========================================================================
 //
 // CREDENTIALS (unchanged):
@@ -200,9 +193,6 @@ async function getComposioAuthConfigId(agencyId: string, connection: string): Pr
   return await getSetting(agencyId, `composio_${connection.toLowerCase()}_auth_config_id`);
 }
 
-// Resolve the Composio tool arguments. If input_config.payload_rpc is set,
-// delegate to the named Postgres function (passing agency_id + tz). Otherwise
-// use input_config verbatim as the arguments.
 async function resolveToolArguments(
   agencyId: string,
   inputConfig: Record<string, any>,
@@ -258,7 +248,7 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
   let outputSummary = "";
 
   try {
-    if (recipe.composio_action === "INTERNAL") {
+    if (recipe.composio_action === "INTERNAL" && recipe.internal_handler !== "email_archiver_orchestrator" && recipe.internal_handler !== "document_processor_orchestrator") {
       const { data: internalResult, error: internalErr } = await sb.rpc("run_internal_recipe", { p_recipe_id: recipeId });
       if (internalErr) throw new Error(`run_internal_recipe failed: ${internalErr.message}`);
       recordsProcessed = (internalResult?.records_processed as number) ?? 0;
@@ -277,11 +267,28 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
       };
     }
 
-    // v5: dispatch to a registered multi-step orchestrator. Each orchestrator
-    // owns its own Composio tool calls and returns aggregated metrics. The
-    // outer try/catch handles failure logging.
+    // v5 dispatch: registered multi-step orchestrators
     if (recipe.internal_handler === "email_archiver_orchestrator") {
       const orchResult = await runEmailArchiverOrchestrator(recipe);
+      recordsProcessed = orchResult.recordsProcessed;
+      outputSummary = orchResult.outputSummary;
+      const durationSec = Math.round((Date.now() - started) / 1000);
+      await sb.from("automation_run_log").insert({
+        agency_id: agencyId, recipe_id: recipeId, status: "success",
+        records_processed: recordsProcessed, error_message: null,
+        duration_seconds: durationSec, output_summary: outputSummary,
+      });
+      await sb.from("automation_recipes").update({ last_run_status: "success" }).eq("id", recipeId);
+      return {
+        recipe_id: recipeId, recipe_name: recipe.recipe_name, status: "success",
+        records_processed: recordsProcessed, duration_seconds: durationSec,
+        triggered_by: triggeredBy, error: null,
+      };
+    }
+
+    // v6: Document Processor orchestrator
+    if (recipe.internal_handler === "document_processor_orchestrator") {
+      const orchResult = await runDocumentProcessorOrchestrator(recipe);
       recordsProcessed = orchResult.recordsProcessed;
       outputSummary = orchResult.outputSummary;
       const durationSec = Math.round((Date.now() - started) / 1000);
@@ -382,7 +389,7 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
 }
 
 // =========================================================================
-// Multi-step orchestrators (v5)
+// Multi-step orchestrators (v5+)
 // =========================================================================
 
 async function ensureGmailLabelId(opts: {
@@ -470,8 +477,6 @@ async function runEmailArchiverOrchestrator(recipe: any): Promise<{
   const agencyId = recipe.agency_id as string;
   const input = recipe.input_config || {};
   const olderThanDays = Number(input.older_than_days ?? 30);
-  // Hard cap to keep us under the Edge Function timeout. The recipe row max_batch
-  // remains the *aspirational* batch size; we ceiling it here as a safety rail.
   const maxBatch = Math.min(Number(input.max_batch ?? 100), 100);
   const routeAttachments = input.route_attachments_to_drive !== false;
   const preserveStarred = input.preserve_starred !== false;
@@ -487,7 +492,6 @@ async function runEmailArchiverOrchestrator(recipe: any): Promise<{
   const driveAccountId    = await getComposioAccountId(agencyId, "googledrive");
   const driveAuthConfigId = await getComposioAuthConfigId(agencyId, "googledrive");
 
-  // 1. Plan: payload_rpc
   const { data: plan, error: planErr } = await sb.rpc("prepare_email_archive_batch", {
     p_agency_id: agencyId,
     p_older_than_days: olderThanDays,
@@ -498,7 +502,6 @@ async function runEmailArchiverOrchestrator(recipe: any): Promise<{
   const gmailQuery: string = plan.gmail_query;
   const dedupSet: Set<string> = new Set(Array.isArray(plan.dedup_message_ids) ? plan.dedup_message_ids : []);
 
-  // 2. Resolve archive label id and target Drive folder ONCE
   const archiveLabelId = await ensureGmailLabelId({
     apiKey: composioApiKey, userId: composioUserId,
     accountId: gmailAccountId, authConfigId: gmailAuthConfigId,
@@ -519,7 +522,6 @@ async function runEmailArchiverOrchestrator(recipe: any): Promise<{
     driveFolderPath = folder.folderPath;
   }
 
-  // 3. Fetch candidate message ids
   const fetchRes = await callComposio({
     apiKey: composioApiKey, userId: composioUserId,
     connectedAccountId: gmailAccountId, authConfigId: gmailAuthConfigId,
@@ -545,7 +547,6 @@ async function runEmailArchiverOrchestrator(recipe: any): Promise<{
     };
   }
 
-  // 4. Per-message loop: fetch full -> check starred -> file attachments -> label
   const archivedIds: string[] = [];
   const attachmentsFiled: any[] = [];
   const skipped: { id: string; reason: string }[] = [];
@@ -571,7 +572,6 @@ async function runEmailArchiverOrchestrator(recipe: any): Promise<{
         subject = h?.value || "";
       }
 
-      // Discover attachments (only when route_attachments_to_drive is on)
       const attachments: { attachmentId: string; filename: string; mimeType: string }[] = [];
       if (routeAttachments) {
         const walk = (parts: any[]): void => {
@@ -600,7 +600,6 @@ async function runEmailArchiverOrchestrator(recipe: any): Promise<{
         }
       }
 
-      // Download + upload each attachment (best-effort, errors don't abort the message)
       for (const att of attachments) {
         try {
           const getRes = await callComposio({
@@ -644,7 +643,6 @@ async function runEmailArchiverOrchestrator(recipe: any): Promise<{
         }
       }
 
-      // Apply archive label + remove INBOX (the actual "archive" action)
       const labelRes = await callComposio({
         apiKey: composioApiKey, userId: composioUserId,
         connectedAccountId: gmailAccountId, authConfigId: gmailAuthConfigId,
@@ -662,7 +660,6 @@ async function runEmailArchiverOrchestrator(recipe: any): Promise<{
     }
   }
 
-  // 5. Callback to result_rpc
   const { data: logResult, error: logErr } = await sb.rpc("log_email_archive_result", {
     p_agency_id: agencyId,
     p_recipe_id: recipe.id,
@@ -678,6 +675,421 @@ async function runEmailArchiverOrchestrator(recipe: any): Promise<{
   const fallback = `${archivedIds.length} archived; ${attachmentsFiled.length} attachments filed (${driveDesc}); ${skipped.length} skipped; ${dedupSet.size} dedup'd`;
   const outputSummary = (logResult?.output_summary as string) || fallback;
   return { recordsProcessed: archivedIds.length, outputSummary };
+}
+
+// =========================================================================
+// v6: Document Processor Orchestrator
+// =========================================================================
+// Polls Gmail for SF Compensation Recap / Paychex Payroll / SF Deduction
+// Statement PDFs. For each found PDF:
+//   1. Classify by sender + filename + subject (regex)
+//   2. File to Drive in the type-appropriate folder
+//   3. Insert a documents row (via log_document_processor_result)
+//   4. Apply 'BCC-Processed' label to Gmail message (so it dedups next run)
+//   5. For Comp Recap / Payroll / Deduction Stmt: fire a "needs ingest" alert
+//
+// v1 SCOPE: detection + filing + alert. The LLM-driven parse for SF Comp Recap
+// is NOT in this version — that stays as the manual backstop
+// (scripts/parsers/sf_comp_recap.py) until Layer 3 v2 ports the parser to TS
+// and confirms a multimodal LLM tool slug in Composio.
+//
+// Drive folder structure used (matches 2026-06-16 EVENING filing pass):
+//   BCC Financial Records/
+//     Live Documents (May 2026 forward)/
+//       SF Compensation Recaps/<year>/
+//       Paychex Payroll/<year>/
+//       SF Deduction Statements/<year>/
+//       Other/<year>/
+// =========================================================================
+
+interface ClassifiedAttachment {
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  docType: "sf_comp_recap" | "paychex_payroll" | "sf_deduction_stmt" | "other";
+  needsIngest: boolean;
+  periodHint: string | null;     // e.g. "2026-05-second" for Comp Recaps
+  driveSubfolder: string;        // category folder name
+}
+
+// Classification regexes. Most-specific patterns first.
+function classifyAttachment(opts: {
+  from: string;
+  subject: string;
+  filename: string;
+  mimeType: string;
+}): { docType: ClassifiedAttachment["docType"]; needsIngest: boolean; periodHint: string | null; driveSubfolder: string } {
+  const from = (opts.from || "").toLowerCase();
+  const subj = (opts.subject || "").toLowerCase();
+  const fname = (opts.filename || "").toLowerCase();
+  const isPdf = opts.mimeType === "application/pdf" || fname.endsWith(".pdf");
+
+  // SF Comp Recap: from statefarm + (subject OR filename) hints
+  if (
+    from.includes("statefarm")
+    && (
+      /comp(ensation)?[\s_\-]*recap/.test(subj)
+      || /comp(ensation)?[\s_\-]*recap/.test(fname)
+      || /recapitulation/.test(subj)
+    )
+    && isPdf
+  ) {
+    return {
+      docType: "sf_comp_recap",
+      needsIngest: true,
+      periodHint: extractCompRecapPeriodHint(fname, subj),
+      driveSubfolder: "SF Compensation Recaps",
+    };
+  }
+
+  // SF Deduction Statement
+  if (
+    from.includes("statefarm")
+    && /deduction[\s_\-]*statement/.test(subj + " " + fname)
+    && isPdf
+  ) {
+    return {
+      docType: "sf_deduction_stmt",
+      needsIngest: true,
+      periodHint: null,
+      driveSubfolder: "SF Deduction Statements",
+    };
+  }
+
+  // Paychex payroll: from paychex + payroll hints
+  if (
+    from.includes("paychex")
+    && (/payroll/.test(subj) || /payroll/.test(fname))
+    && (isPdf || /\.(csv|xlsx?)$/.test(fname))
+  ) {
+    return {
+      docType: "paychex_payroll",
+      needsIngest: true,
+      periodHint: null,
+      driveSubfolder: "Paychex Payroll",
+    };
+  }
+
+  // Generic SF or Paychex doc — file but don't fire ingest alert
+  if (from.includes("statefarm") || from.includes("paychex")) {
+    return {
+      docType: "other",
+      needsIngest: false,
+      periodHint: null,
+      driveSubfolder: "Other",
+    };
+  }
+
+  // Shouldn't reach here given the Gmail query, but be defensive
+  return { docType: "other", needsIngest: false, periodHint: null, driveSubfolder: "Other" };
+}
+
+// Period hint extractor: tries to find YYYY[-_]MM[-_]DD or YYYY_MM in filename/subject.
+// Output format: "YYYY-MM-first" or "YYYY-MM-second" (matching comp_recap.period_half).
+function extractCompRecapPeriodHint(filename: string, subject: string): string | null {
+  const haystack = `${filename} ${subject}`;
+  // Try YYYY[_-]MM[_-]DD first
+  const ymd = haystack.match(/(20\d{2})[_\-\s\.]?(0?[1-9]|1[0-2])[_\-\s\.]?(0?[1-9]|[12]\d|3[01])/);
+  if (ymd) {
+    const year = ymd[1];
+    const month = ymd[2].padStart(2, "0");
+    const day = parseInt(ymd[3], 10);
+    const half = day <= 15 ? "first" : "second";
+    return `${year}-${month}-${half}`;
+  }
+  // Fall back to YYYY[_-]MM
+  const ym = haystack.match(/(20\d{2})[_\-\s\.](0?[1-9]|1[0-2])\b/);
+  if (ym) {
+    const year = ym[1];
+    const month = ym[2].padStart(2, "0");
+    return `${year}-${month}-unknown_half`;
+  }
+  return null;
+}
+
+// Build the Drive path segments for a given document type.
+function driveFolderForDocType(docType: ClassifiedAttachment["docType"], year: string): string[] {
+  const subfolder = {
+    sf_comp_recap:    "SF Compensation Recaps",
+    paychex_payroll:  "Paychex Payroll",
+    sf_deduction_stmt: "SF Deduction Statements",
+    other:            "Other",
+  }[docType];
+  return [
+    "BCC Financial Records",
+    "Live Documents (May 2026 forward)",
+    subfolder,
+    year,
+  ];
+}
+
+async function runDocumentProcessorOrchestrator(recipe: any): Promise<{
+  recordsProcessed: number; outputSummary: string;
+}> {
+  const agencyId = recipe.agency_id as string;
+  const input = recipe.input_config || {};
+  const lookbackMinutes = Number(input.lookback_minutes ?? 60);
+  const maxBatch = Math.min(Number(input.max_batch ?? 10), 25);
+  const processedLabelName = input.processed_label || "BCC-Processed";
+
+  const composioApiKey = Deno.env.get("COMPOSIO_API_KEY") || await getSetting(agencyId, "composio_api_key");
+  if (!composioApiKey) throw new Error("Missing Composio API key for document_processor_orchestrator");
+  const composioUserId = await getSetting(agencyId, "composio_user_id");
+  if (!composioUserId) throw new Error("Missing settings.composio_user_id for document_processor_orchestrator");
+  const gmailAccountId    = await getComposioAccountId(agencyId, "gmail");
+  const gmailAuthConfigId = await getComposioAuthConfigId(agencyId, "gmail");
+  const driveAccountId    = await getComposioAccountId(agencyId, "googledrive");
+  const driveAuthConfigId = await getComposioAuthConfigId(agencyId, "googledrive");
+
+  // 1. Plan
+  const { data: plan, error: planErr } = await sb.rpc("prepare_document_processor_batch", {
+    p_agency_id: agencyId,
+    p_lookback_minutes: lookbackMinutes,
+    p_max_batch: maxBatch,
+  });
+  if (planErr) throw new Error(`prepare_document_processor_batch failed: ${planErr.message}`);
+  if (!plan || typeof plan !== "object") throw new Error("prepare_document_processor_batch returned no plan");
+  const gmailQuery: string = plan.gmail_query;
+  const dedupSet: Set<string> = new Set(Array.isArray(plan.dedup_message_ids) ? plan.dedup_message_ids : []);
+
+  // 2. Ensure the processed-marker label exists
+  const processedLabelId = await ensureGmailLabelId({
+    apiKey: composioApiKey, userId: composioUserId,
+    accountId: gmailAccountId, authConfigId: gmailAuthConfigId,
+    labelName: processedLabelName,
+  });
+
+  // 3. Fetch candidate messages
+  const fetchRes = await callComposio({
+    apiKey: composioApiKey, userId: composioUserId,
+    connectedAccountId: gmailAccountId, authConfigId: gmailAuthConfigId,
+    toolSlug: "GMAIL_FETCH_EMAILS",
+    toolArguments: {
+      query: gmailQuery,
+      max_results: maxBatch,
+      ids_only: true,
+      verbose: false,
+    },
+  });
+  if (!fetchRes.ok) throw new Error(`GMAIL_FETCH_EMAILS failed: ${fetchRes.error}`);
+  const messages: any[] = (fetchRes.data?.messages) || (Array.isArray(fetchRes.data) ? fetchRes.data : []);
+  const candidateIds: string[] = messages
+    .map((m: any) => m?.messageId || m?.id)
+    .filter((id: any) => typeof id === "string" && id.length > 0 && !dedupSet.has(id))
+    .slice(0, maxBatch);
+
+  if (candidateIds.length === 0) {
+    return {
+      recordsProcessed: 0,
+      outputSummary: `No new docs to process (query='${gmailQuery}'; ${dedupSet.size} dedup'd; ${messages.length} returned)`,
+    };
+  }
+
+  // 4. Per-message loop
+  const processed: any[] = [];
+  const skipped: { message_id: string; reason: string }[] = [];
+  const errors: { message_id: string; error: string }[] = [];
+
+  // Cache for resolved Drive folders by (docType, year)
+  const driveFolderCache: Map<string, string> = new Map();
+  const yearNow = new Date().getUTCFullYear().toString();
+
+  async function getDriveFolder(docType: ClassifiedAttachment["docType"], yearOverride?: string): Promise<string> {
+    const year = yearOverride || yearNow;
+    const cacheKey = `${docType}|${year}`;
+    if (driveFolderCache.has(cacheKey)) return driveFolderCache.get(cacheKey)!;
+    const segments = driveFolderForDocType(docType, year);
+    const folder = await findOrCreateDriveFolder({
+      apiKey: composioApiKey, userId: composioUserId,
+      accountId: driveAccountId, authConfigId: driveAuthConfigId,
+      pathSegments: segments,
+    });
+    driveFolderCache.set(cacheKey, folder.folderId);
+    return folder.folderId;
+  }
+
+  for (const msgId of candidateIds) {
+    try {
+      const msgRes = await callComposio({
+        apiKey: composioApiKey, userId: composioUserId,
+        connectedAccountId: gmailAccountId, authConfigId: gmailAuthConfigId,
+        toolSlug: "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
+        toolArguments: { message_id: msgId, format: "full" },
+      });
+      if (!msgRes.ok) { errors.push({ message_id: msgId, error: `fetch_full: ${msgRes.error}` }); continue; }
+      const msg: any = msgRes.data || {};
+
+      // Extract subject + from headers
+      let subject = msg.subject || "";
+      let fromHdr = msg.from || "";
+      if (Array.isArray(msg.payload?.headers)) {
+        for (const h of msg.payload.headers) {
+          const n = (h.name || "").toLowerCase();
+          if (n === "subject" && !subject) subject = h.value || "";
+          if (n === "from" && !fromHdr) fromHdr = h.value || "";
+        }
+      }
+
+      // Walk attachments
+      const attachments: { attachmentId: string; filename: string; mimeType: string }[] = [];
+      const walk = (parts: any[]): void => {
+        for (const p of parts || []) {
+          if (p?.filename && p?.body?.attachmentId) {
+            attachments.push({
+              attachmentId: p.body.attachmentId,
+              filename: p.filename,
+              mimeType: p.mimeType || "application/octet-stream",
+            });
+          }
+          if (Array.isArray(p?.parts)) walk(p.parts);
+        }
+      };
+      walk(msg.payload?.parts || []);
+      if (attachments.length === 0 && Array.isArray(msg.attachmentList)) {
+        for (const a of msg.attachmentList) {
+          if (a?.attachmentId && a?.filename) {
+            attachments.push({
+              attachmentId: a.attachmentId,
+              filename: a.filename,
+              mimeType: a.mimeType || "application/octet-stream",
+            });
+          }
+        }
+      }
+
+      if (attachments.length === 0) {
+        skipped.push({ message_id: msgId, reason: "no_attachments" });
+        continue;
+      }
+
+      let filedAny = false;
+      for (const att of attachments) {
+        try {
+          // Skip non-PDF/non-CSV/non-XLSX attachments (signatures, banner images, etc.)
+          const fn = (att.filename || "").toLowerCase();
+          const isFileable = att.mimeType === "application/pdf"
+            || fn.endsWith(".pdf") || fn.endsWith(".csv") || fn.endsWith(".xlsx") || fn.endsWith(".xls");
+          if (!isFileable) continue;
+
+          const classified = classifyAttachment({
+            from: fromHdr, subject, filename: att.filename, mimeType: att.mimeType,
+          });
+
+          // Resolve Drive folder for this docType + (year from periodHint if available, else current)
+          let folderYear = yearNow;
+          if (classified.periodHint) {
+            const m = classified.periodHint.match(/^(20\d{2})/);
+            if (m) folderYear = m[1];
+          }
+          const driveFolderId = await getDriveFolder(classified.docType, folderYear);
+
+          // Download attachment from Gmail to Composio S3
+          const getRes = await callComposio({
+            apiKey: composioApiKey, userId: composioUserId,
+            connectedAccountId: gmailAccountId, authConfigId: gmailAuthConfigId,
+            toolSlug: "GMAIL_GET_ATTACHMENT",
+            toolArguments: { message_id: msgId, attachment_id: att.attachmentId, file_name: att.filename },
+          });
+          if (!getRes.ok) {
+            console.warn(`[doc_processor] GMAIL_GET_ATTACHMENT failed (${msgId}/${att.filename}): ${getRes.error}`);
+            continue;
+          }
+          const file = getRes.data?.file || getRes.data || {};
+          const s3url = file.s3url || file.url;
+          if (!s3url) {
+            console.warn(`[doc_processor] no s3url for ${msgId}/${att.filename}`);
+            continue;
+          }
+
+          // Upload to Drive
+          const uploadArgs: Record<string, any> = {
+            source_url: s3url,
+            name: att.filename,
+            mime_type: file.mimetype || att.mimeType,
+            parent_folder_id: driveFolderId,
+          };
+          const uploadRes = await callComposio({
+            apiKey: composioApiKey, userId: composioUserId,
+            connectedAccountId: driveAccountId, authConfigId: driveAuthConfigId,
+            toolSlug: "GOOGLEDRIVE_UPLOAD_FROM_URL",
+            toolArguments: uploadArgs,
+          });
+          if (!uploadRes.ok) {
+            console.warn(`[doc_processor] GOOGLEDRIVE_UPLOAD_FROM_URL failed for ${att.filename}: ${uploadRes.error}`);
+            continue;
+          }
+          const driveFile = uploadRes.data || {};
+          const driveFileId: string | null = driveFile.id || driveFile.file_id || driveFile.fileId || null;
+          if (!driveFileId) {
+            console.warn(`[doc_processor] upload returned no id for ${att.filename}`);
+            continue;
+          }
+          const driveUrl: string = driveFile.webViewLink || driveFile.url
+            || `https://drive.google.com/file/d/${driveFileId}/view`;
+
+          processed.push({
+            message_id: msgId,
+            subject,
+            from: fromHdr,
+            file_name: att.filename,
+            file_type: file.mimetype || att.mimeType,
+            drive_file_id: driveFileId,
+            drive_url: driveUrl,
+            doc_type: classified.docType,
+            needs_ingest: classified.needsIngest,
+            period_hint: classified.periodHint,
+          });
+          filedAny = true;
+        } catch (attErr) {
+          console.warn(`[doc_processor] attachment crash (${msgId}/${att.filename}): ${attErr instanceof Error ? attErr.message : attErr}`);
+        }
+      }
+
+      if (!filedAny) {
+        skipped.push({ message_id: msgId, reason: "no_fileable_attachments" });
+        continue;
+      }
+
+      // Apply the processed-marker label (dedup signal for next run, also lets
+      // Email Archiver skip these via "-label:BCC-Processed" — wait, that
+      // exclusion is in prepare_document_processor_batch's query, not the
+      // Email Archiver's. The label is purely a hint for human + dedup).
+      const labelRes = await callComposio({
+        apiKey: composioApiKey, userId: composioUserId,
+        connectedAccountId: gmailAccountId, authConfigId: gmailAuthConfigId,
+        toolSlug: "GMAIL_ADD_LABEL_TO_EMAIL",
+        toolArguments: {
+          message_id: msgId,
+          add_label_ids: [processedLabelId],
+        },
+      });
+      if (!labelRes.ok) {
+        // Label failure is non-fatal — file already in Drive + documents row will be inserted
+        console.warn(`[doc_processor] label add failed for ${msgId}: ${labelRes.error}`);
+      }
+    } catch (loopErr) {
+      errors.push({ message_id: msgId, error: `loop_crash: ${loopErr instanceof Error ? loopErr.message : loopErr}` });
+    }
+  }
+
+  // 5. Callback to result_rpc
+  const { data: logResult, error: logErr } = await sb.rpc("log_document_processor_result", {
+    p_agency_id: agencyId,
+    p_recipe_id: recipe.id,
+    p_result: { processed, skipped, errors },
+  });
+  if (logErr) throw new Error(`log_document_processor_result failed: ${logErr.message}`);
+
+  if (skipped.length > 0) {
+    console.warn(`[doc_processor] skipped detail (first 10): ${JSON.stringify(skipped.slice(0, 10))}`);
+  }
+  if (errors.length > 0) {
+    console.warn(`[doc_processor] error detail (first 10): ${JSON.stringify(errors.slice(0, 10))}`);
+  }
+
+  const fallback = `${processed.length} attachments filed; ${skipped.length} messages skipped; ${errors.length} errors; ${dedupSet.size} dedup'd`;
+  const outputSummary = (logResult?.output_summary as string) || fallback;
+  return { recordsProcessed: processed.length, outputSummary };
 }
 
 Deno.serve(async (req: Request) => {
