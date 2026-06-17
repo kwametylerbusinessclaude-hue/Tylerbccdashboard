@@ -46,6 +46,38 @@
 // Deduction Stmt) fires an alert flagging the doc for downstream ingestion.
 //
 // =========================================================================
+// 2026-06-17 REFACTOR v8 — Social Scheduler v2 orchestrators
+// =========================================================================
+// Adds three new orchestrators registered under internal_handler:
+//   social_scheduler_facebook_orchestrator   -> runFacebookScheduler()
+//   social_scheduler_linkedin_orchestrator   -> runLinkedInScheduler()
+//   social_scheduler_instagram_orchestrator  -> runInstagramReminder()
+//
+// All three use the payload_rpc / result_rpc plumbing from migration 029:
+//   payload_rpc returns a jsonb plan of due content_calendar items.
+//   For Facebook/LinkedIn, the orchestrator posts each item via the
+//   corresponding Composio action (FACEBOOK_POST_TO_PAGE / LINKEDIN_CREATE_POST)
+//   and captures the post_url.  For Instagram, it sends a Gmail
+//   reminder email (no auto-post API exists).  result_rpc updates
+//   content_calendar status + retry_count + fires alerts on terminal
+//   failure or AA05-prohibited content.
+//
+// AA05 word-rule pre-flight (TS) runs in addition to the SQL belt; both
+// catch the same canonical prohibited terms.  TS list is slightly richer.
+//
+// Registered orchestrators after this commit:
+//   email_archiver_orchestrator              -> runEmailArchiverOrchestrator()
+//   document_processor_orchestrator          -> runDocumentProcessorOrchestrator()
+//   social_scheduler_facebook_orchestrator   -> runFacebookScheduler()
+//   social_scheduler_linkedin_orchestrator   -> runLinkedInScheduler()
+//   social_scheduler_instagram_orchestrator  -> runInstagramReminder()
+//
+// All three social recipes stay is_active=false in Phase v2.0.  Phase
+// v2.3 activates them once social_accounts table is populated +
+// Composio Facebook/LinkedIn connections confirmed.
+// =========================================================================
+
+// =========================================================================
 // 2026-06-17 REFACTOR v7 — Document Processor stage C (PARSE + INGEST)
 // =========================================================================
 // Adds the in-Edge-Function parse leg.  Gated by recipe input_config flag
@@ -274,7 +306,7 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
   let outputSummary = "";
 
   try {
-    if (recipe.composio_action === "INTERNAL" && recipe.internal_handler !== "email_archiver_orchestrator" && recipe.internal_handler !== "document_processor_orchestrator") {
+    if (recipe.composio_action === "INTERNAL" && recipe.internal_handler !== "email_archiver_orchestrator" && recipe.internal_handler !== "document_processor_orchestrator" && recipe.internal_handler !== "social_scheduler_facebook_orchestrator" && recipe.internal_handler !== "social_scheduler_linkedin_orchestrator" && recipe.internal_handler !== "social_scheduler_instagram_orchestrator") {
       const { data: internalResult, error: internalErr } = await sb.rpc("run_internal_recipe", { p_recipe_id: recipeId });
       if (internalErr) throw new Error(`run_internal_recipe failed: ${internalErr.message}`);
       recordsProcessed = (internalResult?.records_processed as number) ?? 0;
@@ -315,6 +347,29 @@ async function executeRecipe(recipe: any, triggeredBy: string): Promise<any> {
     // v6: Document Processor orchestrator
     if (recipe.internal_handler === "document_processor_orchestrator") {
       const orchResult = await runDocumentProcessorOrchestrator(recipe);
+      recordsProcessed = orchResult.recordsProcessed;
+      outputSummary = orchResult.outputSummary;
+      const durationSec = Math.round((Date.now() - started) / 1000);
+      await sb.from("automation_run_log").insert({
+        agency_id: agencyId, recipe_id: recipeId, status: "success",
+        records_processed: recordsProcessed, error_message: null,
+        duration_seconds: durationSec, output_summary: outputSummary,
+      });
+      await sb.from("automation_recipes").update({ last_run_status: "success" }).eq("id", recipeId);
+      return {
+        recipe_id: recipeId, recipe_name: recipe.recipe_name, status: "success",
+        records_processed: recordsProcessed, duration_seconds: durationSec,
+        triggered_by: triggeredBy, error: null,
+      };
+    }
+
+    // v8: Social Scheduler orchestrators (Facebook / LinkedIn / Instagram).
+    // All three share the social_scheduler_* internal_handler family and
+    // resolve to a single dispatch function with the platform in input_config.
+    if (recipe.internal_handler === "social_scheduler_facebook_orchestrator" ||
+        recipe.internal_handler === "social_scheduler_linkedin_orchestrator" ||
+        recipe.internal_handler === "social_scheduler_instagram_orchestrator") {
+      const orchResult = await runSocialScheduler(recipe);
       recordsProcessed = orchResult.recordsProcessed;
       outputSummary = orchResult.outputSummary;
       const durationSec = Math.round((Date.now() - started) / 1000);
@@ -1679,6 +1734,279 @@ async function runDocumentProcessorOrchestrator(recipe: any): Promise<{
   const fallback = `${processed.length} attachments filed; ${skipped.length} messages skipped; ${errors.length} errors; ${dedupSet.size} dedup'd${parseSummary}`;
   const outputSummary = ((logResult?.output_summary as string) || fallback) + parseSummary;
   return { recordsProcessed: processed.length, outputSummary };
+}
+
+
+// =========================================================================
+// v8 — Social Scheduler v2 orchestrators
+// =========================================================================
+// Shared dispatch that routes by recipe.input_config.platform:
+//   facebook  -> FACEBOOK_POST_TO_PAGE  (auto-post)
+//   linkedin  -> LINKEDIN_CREATE_POST   (auto-post)
+//   instagram -> GMAIL_SEND_EMAIL       (reminder email, manual post)
+//
+// Each path uses payload_rpc to fetch the plan (migration 029's
+// prepare_*_post_batch), iterates the items, posts/reminds, and calls
+// result_rpc (log_social_post_result) with per-item outcomes.
+//
+// AA05 belt-and-suspenders: the SQL prepare_* RPCs filter via
+// has_aa05_prohibited_terms(); this TS pre-flight catches anything that
+// slipped through (extended pattern list).
+
+// AA05 prohibited token list — keep tight to avoid false positives.
+// Source: agent system prompt § "Word Rules".
+const AA05_PROHIBITED_TERMS: string[] = [
+  "client", "clients",
+  "solutions",
+  "expert ", " expert", "experts ", " experts",
+  "specialist",
+  "advisor", "consultant",
+  "transfers welcome",
+  "financial freedom",
+  "wealth accumulation",
+  "world-class", "world class",
+  "first-class", "first class",
+  "cheap", "affordable", "low cost",
+  "guarantee", "guaranteed",
+  "#1", "greatest",
+];
+
+function checkAA05Compliance(text: string): { ok: boolean; reason: string | null } {
+  if (!text || text.length === 0) return { ok: true, reason: null };
+  const lower = text.toLowerCase();
+  for (const term of AA05_PROHIBITED_TERMS) {
+    if (lower.includes(term)) return { ok: false, reason: `aa05_prohibited_term: '${term.trim()}'` };
+  }
+  return { ok: true, reason: null };
+}
+
+
+async function runSocialScheduler(recipe: any): Promise<{ recordsProcessed: number; outputSummary: string }> {
+  const agencyId = recipe.agency_id as string;
+  const input = recipe.input_config || {};
+  const platform: string = String(input.platform || "").toLowerCase();
+  const payloadRpc: string = input.payload_rpc;
+  const resultRpc:  string = input.result_rpc || "log_social_post_result";
+
+  if (!["facebook", "linkedin", "instagram"].includes(platform)) {
+    throw new Error(`runSocialScheduler: unknown platform '${platform}'`);
+  }
+  if (!payloadRpc) {
+    throw new Error(`runSocialScheduler: recipe ${recipe.id} missing input_config.payload_rpc`);
+  }
+
+  const composioApiKey = Deno.env.get("COMPOSIO_API_KEY") || await getSetting(agencyId, "composio_api_key");
+  if (!composioApiKey) throw new Error("Missing Composio API key for social scheduler");
+  const composioUserId = await getSetting(agencyId, "composio_user_id");
+  if (!composioUserId) throw new Error("Missing settings.composio_user_id for social scheduler");
+
+  // 1. Get the plan
+  const tz = (await getSetting(agencyId, "agency_timezone")) || "America/New_York";
+  const { data: plan, error: planErr } = await sb.rpc(payloadRpc, {
+    p_agency_id: agencyId, p_tz: tz,
+  });
+  if (planErr) throw new Error(`${payloadRpc} failed: ${planErr.message}`);
+  if (!plan || typeof plan !== "object") throw new Error(`${payloadRpc} returned no plan`);
+  const items: any[] = Array.isArray(plan.items) ? plan.items : [];
+  const skipped: any[] = Array.isArray(plan.skipped) ? plan.skipped : [];
+
+  if (items.length === 0 && skipped.length === 0) {
+    return { recordsProcessed: 0, outputSummary: `No due ${platform} items` };
+  }
+
+  // 2. Resolve Composio connection details for the platform
+  let postAccountId: string | null = null;
+  let postAuthConfigId: string | null = null;
+  let pageId: string | null = null;
+  if (platform === "facebook") {
+    postAccountId    = await getComposioAccountId(agencyId, "facebook");
+    postAuthConfigId = await getComposioAuthConfigId(agencyId, "facebook");
+    pageId           = await getSetting(agencyId, "facebook_page_id");
+  } else if (platform === "linkedin") {
+    postAccountId    = await getComposioAccountId(agencyId, "linkedin");
+    postAuthConfigId = await getComposioAuthConfigId(agencyId, "linkedin");
+  }
+
+  // 3. Process each item
+  const results: any[] = [];
+  for (const item of items) {
+    try {
+      // TS pre-flight AA05 (defensive — SQL belt should have caught these)
+      const compliance = checkAA05Compliance(String(item.caption || ""));
+      if (!compliance.ok) {
+        // Record as a skip rather than a failure
+        skipped.push({ id: item.id, reason: compliance.reason });
+        continue;
+      }
+
+      if (platform === "facebook") {
+        const postRes = await postToFacebook({
+          apiKey: composioApiKey, userId: composioUserId,
+          accountId: postAccountId, authConfigId: postAuthConfigId,
+          pageId, caption: item.caption, hashtags: item.hashtags || [],
+          mediaUrl: item.media_url,
+        });
+        if (postRes.ok) {
+          results.push({ id: item.id, status: "posted", post_url: postRes.postUrl, platform });
+        } else {
+          results.push({ id: item.id, status: "failed", error: postRes.error, platform });
+        }
+
+      } else if (platform === "linkedin") {
+        const postRes = await postToLinkedIn({
+          apiKey: composioApiKey, userId: composioUserId,
+          accountId: postAccountId, authConfigId: postAuthConfigId,
+          caption: item.caption, hashtags: item.hashtags || [],
+          mediaUrl: item.media_url,
+        });
+        if (postRes.ok) {
+          results.push({ id: item.id, status: "posted", post_url: postRes.postUrl, platform });
+        } else {
+          results.push({ id: item.id, status: "failed", error: postRes.error, platform });
+        }
+
+      } else if (platform === "instagram") {
+        // Manual-posting flow: send an email reminder.  Instagram has no
+        // server-side API for posting from third-party agents.
+        const reminderEmail: string = input.reminder_email
+          || (await getSetting(agencyId, "owner_email"))
+          || "kwametyler.businessclaude@gmail.com";
+        const sendRes = await sendInstagramReminderEmail({
+          apiKey: composioApiKey, userId: composioUserId, agencyId,
+          to: reminderEmail, item,
+        });
+        if (sendRes.ok) {
+          results.push({ id: item.id, status: "reminded", reminder_sent: true, platform });
+        } else {
+          results.push({ id: item.id, status: "failed", error: sendRes.error, platform });
+        }
+      }
+    } catch (itemErr) {
+      const msg = itemErr instanceof Error ? itemErr.message : String(itemErr);
+      results.push({ id: item.id, status: "failed", error: `crash: ${msg}`, platform });
+    }
+  }
+
+  // 4. Callback to result_rpc
+  const { data: logResult, error: logErr } = await sb.rpc(resultRpc, {
+    p_agency_id: agencyId,
+    p_recipe_id: recipe.id,
+    p_result: { results, skipped },
+  });
+  if (logErr) throw new Error(`${resultRpc} failed: ${logErr.message}`);
+
+  const fallback = `${platform}: ${results.length} processed, ${skipped.length} skipped`;
+  const outputSummary = (logResult?.output_summary as string) || fallback;
+  return { recordsProcessed: results.length, outputSummary };
+}
+
+
+async function postToFacebook(opts: {
+  apiKey: string; userId: string; accountId: string | null; authConfigId: string | null;
+  pageId: string | null; caption: string; hashtags: string[]; mediaUrl: string | null;
+}): Promise<{ ok: boolean; postUrl: string | null; error: string | null }> {
+  // Caption strategy: caption + " " + hashtags joined.
+  // FB best practice is 3-5 hashtags max (per agent system prompt).
+  const hashtagsText = (opts.hashtags || []).slice(0, 5).map((h) => h.startsWith("#") ? h : `#${h}`).join(" ");
+  const finalCaption = hashtagsText
+    ? `${opts.caption}\n\n${hashtagsText}`
+    : opts.caption;
+  const toolArgs: Record<string, any> = {
+    message: finalCaption,
+  };
+  if (opts.pageId) toolArgs.page_id = opts.pageId;
+  if (opts.mediaUrl) {
+    toolArgs.link = opts.mediaUrl;
+    toolArgs.image_url = opts.mediaUrl;
+  }
+  const res = await callComposio({
+    apiKey: opts.apiKey, userId: opts.userId,
+    connectedAccountId: opts.accountId, authConfigId: opts.authConfigId,
+    toolSlug: "FACEBOOK_POST_TO_PAGE",
+    toolArguments: toolArgs,
+  });
+  if (!res.ok) return { ok: false, postUrl: null, error: res.error };
+  const d = res.data || {};
+  const postId: string | null = d.id || d.post_id || d.postId || null;
+  const postUrl: string | null = d.permalink_url || d.post_url
+    || (postId ? `https://facebook.com/${postId}` : null);
+  return { ok: true, postUrl, error: null };
+}
+
+
+async function postToLinkedIn(opts: {
+  apiKey: string; userId: string; accountId: string | null; authConfigId: string | null;
+  caption: string; hashtags: string[]; mediaUrl: string | null;
+}): Promise<{ ok: boolean; postUrl: string | null; error: string | null }> {
+  // LinkedIn best practice (per agent system prompt): 3-5 professional
+  // hashtags, embedded in text.  Text-only posts get maximum reach;
+  // links go in the first comment, not the post body — but for the
+  // automated path we put media inline.
+  const hashtagsText = (opts.hashtags || []).slice(0, 5).map((h) => h.startsWith("#") ? h : `#${h}`).join(" ");
+  const text = hashtagsText
+    ? `${opts.caption}\n\n${hashtagsText}`
+    : opts.caption;
+  const toolArgs: Record<string, any> = { text };
+  if (opts.mediaUrl) toolArgs.media_url = opts.mediaUrl;
+  const res = await callComposio({
+    apiKey: opts.apiKey, userId: opts.userId,
+    connectedAccountId: opts.accountId, authConfigId: opts.authConfigId,
+    toolSlug: "LINKEDIN_CREATE_POST",
+    toolArguments: toolArgs,
+  });
+  if (!res.ok) return { ok: false, postUrl: null, error: res.error };
+  const d = res.data || {};
+  const postUrn: string | null = d.id || d.urn || d.post_id || null;
+  const postUrl: string | null = d.url || d.share_url
+    || (postUrn ? `https://www.linkedin.com/feed/update/${postUrn}` : null);
+  return { ok: true, postUrl, error: null };
+}
+
+
+async function sendInstagramReminderEmail(opts: {
+  apiKey: string; userId: string; agencyId: string; to: string; item: any;
+}): Promise<{ ok: boolean; error: string | null }> {
+  const gmailAccountId    = await getComposioAccountId(opts.agencyId, "gmail").catch(() => null);
+  const gmailAuthConfigId = await getComposioAuthConfigId(opts.agencyId, "gmail").catch(() => null);
+  const item = opts.item || {};
+  const hashtagsArr: string[] = Array.isArray(item.hashtags) ? item.hashtags : [];
+  const hashtagsText = hashtagsArr.length > 0
+    ? hashtagsArr.slice(0, 25).map((h: string) => h.startsWith("#") ? h : `#${h}`).join(" ")
+    : "(no hashtags set)";
+  const subject = `[BCC] Instagram post reminder — ${item.scheduled_date || "today"}`;
+  const body = [
+    "Your Instagram post is ready to post manually.",
+    "",
+    "(Instagram doesn't allow API auto-posting — only reminders.)",
+    "",
+    "---",
+    "",
+    "CAPTION:",
+    String(item.caption || "(no caption)"),
+    "",
+    "HASHTAGS (paste into the first comment, not the caption):",
+    hashtagsText,
+    "",
+    `MEDIA URL: ${item.media_url || "(none — upload manually)"}`,
+    `SCHEDULED:  ${item.scheduled_date || "?"} ${item.scheduled_time || ""}`,
+    "",
+    `content_calendar id: ${item.id}`,
+    "",
+    "After posting, mark the item 'posted' in BCC Social Media module.",
+  ].join("\n");
+
+  const res = await callComposio({
+    apiKey: opts.apiKey, userId: opts.userId,
+    connectedAccountId: gmailAccountId, authConfigId: gmailAuthConfigId,
+    toolSlug: "GMAIL_SEND_EMAIL",
+    toolArguments: {
+      recipient_email: opts.to,
+      subject,
+      body,
+    },
+  });
+  if (!res.ok) return { ok: false, error: res.error };
+  return { ok: true, error: null };
 }
 
 Deno.serve(async (req: Request) => {
