@@ -57,7 +57,7 @@ Each section below answers four questions Project Claude needs during debugging:
 **Reads:**
 - `agency` — for header agency name, logo URL, contact info
 - `tasks` (where `agency_id = AGENCY_ID AND status = 'open'` order by due_date) — Open Tasks widget
-- `alerts` (where `agency_id = AGENCY_ID AND resolved = false`) — Active Alerts widget
+- `alerts` (where `agency_id = AGENCY_ID AND is_resolved = false`) — Active Alerts widget
 - `compliance_log` (last 30 days) — Compliance Activity widget
 - `monthly_close_checklist` (current month) — Monthly Close widget
 - `aipp_tracking` (current program year) — AIPP Progress card
@@ -67,7 +67,7 @@ Each section below answers four questions Project Claude needs during debugging:
 **If everything is empty:** Dashboard shows the agency header (from `agency` row) with all 7 widgets in their EmptyState. The header tells you `agency` is wired correctly. The widgets tell you the operational tables haven't been populated yet — that's normal pre-data state.
 
 **If something's wrong:**
-- Header shows "Untitled Agency" → `agency` table is empty or `agency_name` is NULL. Re-run migration 004 with the client's real data, or `UPDATE agency SET agency_name = '...'`.
+- Header shows "Untitled Agency" → `agency` table is empty or `agency.name` is NULL. Re-run migration 004 with the client's real data, or `UPDATE agency SET name = '...'`.
 - Revenue YTD shows $0 even after comp_recap has rows → `v_income_statement` view is missing or wrong. Re-run migration 006.
 - AIPP card shows nothing → `aipp_tracking` row missing for current program year. INSERT one manually with their target.
 - Open Tasks shows 0 but agent says they have tasks → check `tasks.status` values. The dashboard expects `'open'`. If the client's data uses `'pending'` or `'todo'`, either UPDATE the values or build a bridge view.
@@ -86,7 +86,7 @@ Each section below answers four questions Project Claude needs during debugging:
 - `v_income_statement` (derived view from migration 006) — P&L tab
 - `v_balance_sheet` (derived view from migration 006) — Balance Sheet tab
 - `comp_recap` — SF Compensation tab (the most important table for this module)
-- `journal_entries` + `journal_lines` (joined via `entry_id`) — General Ledger tab
+- `journal_entries` + `journal_lines` (joined via `journal_lines.journal_entry_id = journal_entries.id`) — General Ledger tab
 - `chart_of_accounts` — needed by GL for account names
 - `payroll_runs` + `payroll_detail` — Payroll tab
 - `bank_accounts` + (computed monthly totals from `journal_entries`) — Bank tab
@@ -158,7 +158,7 @@ For installations where the agent wants their historical archives indexed, manua
 **Reads (across multiple tabs):**
 - **Roster tab:** `staff` (filtered by agency_id, where `is_active != false`)
 - **Applicants tab:** `applicants` (with Groq scores from the Resume Auto-Import recipe)
-- **Performance tab:** `staff` (producers only — `role` ILIKE '%LSP%' OR '%Producer%' OR '%Financial Services%') joined to `producer_production`, `payroll_detail`, `payroll_runs`, `comp_recap`, plus reads `agency.smvc_rate_pc`, `agency.blended_rate_other`, `agency.lapse_rate_annual`
+- **Performance tab:** `staff` (producers only — `role` ILIKE '%LSP%' OR '%Producer%' OR '%Financial Services%' OR '%Agent%') joined to `producer_production` (via `producer_production.staff_id = staff.id`), `payroll_detail`, `payroll_runs`, `comp_recap`, plus reads `agency.smvc_rate_pc`, `agency.blended_rate_other`, `agency.lapse_rate_annual`
 - **Onboarding tab:** `onboarding_checklists`
 - **Reviews tab:** `staff_performance`
 - **Commissions tab:** `commission_structures`
@@ -202,13 +202,13 @@ For installations where the agent wants their historical archives indexed, manua
 ### AlertsNotifications
 
 **Reads:**
-- `alerts` (filtered by `agency_id`, ordered by `severity` DESC, `created_at` DESC)
+- `alerts` (filtered by `agency_id`, `is_resolved=false` first, ordered by `severity` DESC, `created_at` DESC; `resolved_at` populated when resolved)
 - `notification_preferences` (single row per agency)
 
 **If empty:** Module shows "No active alerts" — that's correct. Alerts get created by recipes (Producer Underperformance Watcher #12, Monthly Close Monitor #11, others) and by Project Claude when something breaks.
 
 **If something's wrong:**
-- Alerts show but agent says they've resolved them → toggling the resolved state writes back to `alerts.resolved`. Confirm RLS allows UPDATE (migration 005).
+- Alerts show but agent says they've resolved them → toggling the resolved state writes back to `alerts.is_resolved` and sets `resolved_at`. Confirm RLS allows UPDATE (migration 005).
 
 ---
 
@@ -309,4 +309,4 @@ Path A installs run this in Step 2 of the handoff prompt. Path B installs should
 
 ---
 
-*Last updated: 2026-05-10 — initial doc shipped to close the "Project Claude doesn't know which table feeds which module" gap.*
+*Last updated: 2026-06-17 — column-name corrections (agency.name, alerts.is_resolved/resolved_at, journal_lines.journal_entry_id, producer_production.staff_id) + Agent role added to HRPeople producer regex. Initial doc 2026-05-10.*
