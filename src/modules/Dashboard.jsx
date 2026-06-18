@@ -59,28 +59,70 @@ const ProgressBar = ({value, max, color=T.blue, height=6}) => {
   );
 };
 
-// ── Widget: Financial KPIs ─────────────────────────────────────
+// ── Widget: Financial KPIs (Option C — federal YTD, YoY, P&C, annual pace) ─────
+// Reads from data.financialKpis which is computed in loadDashboard() from
+// comp_recap.ytd_snapshot aggregates (NOT from v_income_statement, which only
+// holds post-cutover GL data). This gives the agent the truthful federal-reported
+// income picture rather than the partial post-cutover ledger.
 const FinancialWidget = ({ data, onNavigate }) => {
-  const s = data.summary || {};
-  const kpis = [
-    { label:"Revenue MTD",    value:fmt(s.revenueMTD),    color:T.green,  border:T.green },
-    { label:"Expenses MTD",   value:fmt(s.expensesMTD),   color:T.red,    border:T.red   },
-    { label:"Net Income MTD", value:fmt(s.netIncomeMTD),  color:s.netIncomeMTD>=0?T.green:T.red, border:s.netIncomeMTD>=0?T.green:T.red },
-    { label:"Revenue YTD",   value:fmt(s.revenueYTD),    color:T.navy,   border:T.navy  },
+  const k = data.financialKpis || {};
+  const hasData = (k.federalYtd2026 || 0) > 0;
+  const yoy = k.yoyPct;
+  const yoyColor = !Number.isFinite(yoy) ? T.slate500 : yoy >= 0 ? T.green : T.red;
+  const yoyArrow = !Number.isFinite(yoy) ? "" : yoy >= 0 ? "↑" : "↓";
+  const yoyText = !Number.isFinite(yoy) ? "—" : `${yoyArrow} ${yoy >= 0 ? "+" : ""}${yoy.toFixed(1)}%`;
+  const pcYoy = k.pcYoyPct;
+  const pcYoyText = !Number.isFinite(pcYoy) ? "" : ` (${pcYoy >= 0 ? "+" : ""}${pcYoy.toFixed(1)}% YoY)`;
+  const recapDate = k.latestRecapDate
+    ? new Date(k.latestRecapDate + "T12:00:00Z").toLocaleDateString("en-US",{month:"short", day:"numeric", year:"numeric"})
+    : null;
+  const paceVsLast = !Number.isFinite(k.annualPace2026) || !Number.isFinite(k.federalFull2025) || k.federalFull2025 === 0
+    ? ""
+    : ` vs ${fmt(k.federalFull2025).replace(".00","")}`;
+  const cells = [
+    {
+      label: "Federal YTD",
+      value: fmt(k.federalYtd2026),
+      sub: recapDate ? `as of ${recapDate}` : "no recap loaded",
+      color: T.navy, border: T.navy,
+    },
+    {
+      label: recapDate ? `vs ${new Date((k.latestRecapDate||"").replace(/^2026/,"2025") + "T12:00:00Z").toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}` : "vs 2025 same period",
+      value: yoyText,
+      sub: Number.isFinite(k.federalYtd2025) ? `${fmt(k.federalYtd2025)} last year` : "",
+      color: yoyColor, border: yoyColor,
+    },
+    {
+      label: "P&C Premium YTD",
+      value: fmt(k.pcYtd2026),
+      sub: `AIPP base${pcYoyText}`,
+      color: T.blue, border: T.blue,
+    },
+    {
+      label: "2026 Annual Pace",
+      value: fmt(k.annualPace2026),
+      sub: `empirical${paceVsLast}`,
+      color: T.green, border: T.green,
+    },
   ];
   return (
     <Card>
       <SectionTitle icon="💰" title="Financial Overview"
         action={<button onClick={()=>onNavigate("financials")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View Full P&L →</button>}
       />
-      <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
-        {kpis.map((k,i) => (
-          <div key={i} style={{padding:"10px 12px", borderRadius:8, border:`1px solid ${k.border}20`, background:`${k.border}08`}}>
-            <div style={{fontSize:10, color:T.slate500, marginBottom:4, fontWeight:600}}>{k.label}</div>
-            <div style={{fontSize:16, fontWeight:800, color:k.color}}>{k.value}</div>
-          </div>
-        ))}
-      </div>
+      {!hasData ? (
+        <EmptyRow message="No comp_recap data yet — once the Document Processor ingests recaps, KPIs populate here." />
+      ) : (
+        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+          {cells.map((c,i) => (
+            <div key={i} style={{padding:"10px 12px", borderRadius:8, border:`1px solid ${c.border}20`, background:`${c.border}08`}}>
+              <div style={{fontSize:10, color:T.slate500, marginBottom:4, fontWeight:600, lineHeight:1.2}}>{c.label}</div>
+              <div style={{fontSize:18, fontWeight:800, color:c.color, lineHeight:1.1}}>{c.value}</div>
+              {c.sub && <div style={{fontSize:9, color:T.slate400, marginTop:3, fontWeight:500}}>{c.sub}</div>}
+            </div>
+          ))}
+        </div>
+      )}
     </Card>
   );
 };
@@ -383,25 +425,78 @@ export default function Dashboard({ onNavigate = () => {} }) {
         const agency = agencyRes.status==="fulfilled" ? agencyRes.value.data : null;
         if (agency?.name) setAgencyName(agency.name);
 
-        // Build comp_recap summary from view
-        const { data: compData } = await supabase.from("comp_recap").select("*").order("period_year",{ascending:false}).order("period_month",{ascending:false}).limit(20);
-        const latestComp = (compData||[])[0] || {};
+        // ── Comp_recap-driven KPIs (Option C) ───────────────────────────
+        // Federal-reported income comes from comp_recap.ytd_snapshot (the truthful
+        // SF compensation, includes pre-cutover history). v_income_statement
+        // only holds post-cutover GL entries and would understate real YTD.
+        // Pull latest 2026 + same-period 2025 + full-year 2025 in parallel for
+        // YoY + annual pace.
+        const PC_TYPES = ["MUTL","FIRE","STDAUTO"];
+        const sumOnRecap = (rows, dateStr, filter=null) => {
+          if (!dateStr) return 0;
+          return (rows || [])
+            .filter(r => r.recap_date === dateStr && r.amount_type === "ytd_snapshot")
+            .filter(r => filter ? filter(r) : true)
+            .reduce((s,r) => s + (parseFloat(r.amount) || 0), 0);
+        };
+        const ytdSnapshotFor = async (year, opts={}) => {
+          const { data, error } = await supabase
+            .from("comp_recap")
+            .select("recap_date,amount,amount_type,comp_type,comp_category")
+            .eq("period_year", year)
+            .eq("amount_type", "ytd_snapshot")
+            .order("recap_date", { ascending: false });
+          if (error || !data) return { rows: [], latest: null, latestSamePeriod: null };
+          const dates = [...new Set(data.map(r => r.recap_date))].sort().reverse();
+          return { rows: data, latest: dates[0] || null, allDates: dates };
+        };
+        const rec2026 = await ytdSnapshotFor(2026);
+        const rec2025 = await ytdSnapshotFor(2025);
+        // Same-period 2025 = the 2025 recap whose (month,half-marker) matches latest 2026.
+        // Encode as MM-DD since both years' recaps land on 15th and last-day of month.
+        const sameMmDd = (latest2026 => {
+          if (!latest2026) return null;
+          const mmdd = latest2026.slice(5); // "MM-DD"
+          // Find 2025 recap whose MM-DD matches. Feb edge: 02-28 vs 02-29 handled by exact MM-DD.
+          return (rec2025.allDates || []).find(d => d.slice(5) === mmdd) || null;
+        })(rec2026.latest);
+        const lastOf2025 = (rec2025.allDates || [])[0] || null;
 
-        // Build income statement summary
+        const federalYtd2026 = sumOnRecap(rec2026.rows, rec2026.latest);
+        const federalYtd2025 = sumOnRecap(rec2025.rows, sameMmDd);
+        const federalFull2025 = sumOnRecap(rec2025.rows, lastOf2025);
+        const pcYtd2026 = sumOnRecap(rec2026.rows, rec2026.latest, r => PC_TYPES.includes(r.comp_type));
+        const pcYtd2025 = sumOnRecap(rec2025.rows, sameMmDd, r => PC_TYPES.includes(r.comp_type));
+        const yoyPct = (federalYtd2025 > 0)
+          ? ((federalYtd2026 - federalYtd2025) / federalYtd2025) * 100
+          : NaN;
+        const pcYoyPct = (pcYtd2025 > 0)
+          ? ((pcYtd2026 - pcYtd2025) / pcYtd2025) * 100
+          : NaN;
+        // Empirical annual pace: 2026 YTD * (2025 full / 2025 same-period).
+        // More accurate than straight-line annualization because comp comes in
+        // bumpy (AIPP lump sum January, Q3 L&H push, etc.)
+        const annualPace2026 = (federalYtd2025 > 0 && federalFull2025 > 0)
+          ? federalYtd2026 * (federalFull2025 / federalYtd2025)
+          : NaN;
+
+        // Legacy income statement summary kept for any backward-compat consumers
         const now = new Date();
         const curYear  = now.getFullYear();
         const curMonth = now.getMonth() + 1;
-        const { data: isData } = await supabase.from("v_income_statement")
-          .select("account_name, account_type, amount, month, year")
-          .eq("year", curYear)
-          .limit(500);
-
-        const incomeLines  = (isData||[]).filter(r => r.account_type === "income");
-        const expenseLines = (isData||[]).filter(r => r.account_type === "expense");
-        const sum = rows => rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
-        const revenueMTD  = sum(incomeLines.filter(r  => r.month === curMonth));
-        const expensesMTD = sum(expenseLines.filter(r => r.month === curMonth));
-        const revenueYTD  = sum(incomeLines);
+        let revenueMTD = 0, expensesMTD = 0, revenueYTD = 0;
+        try {
+          const { data: isData } = await supabase.from("v_income_statement")
+            .select("account_name, account_type, amount, month, year")
+            .eq("year", curYear)
+            .limit(500);
+          const incomeLines  = (isData||[]).filter(r => r.account_type === "income");
+          const expenseLines = (isData||[]).filter(r => r.account_type === "expense");
+          const sum = rows => rows.reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+          revenueMTD  = sum(incomeLines.filter(r  => r.month === curMonth));
+          expensesMTD = sum(expenseLines.filter(r => r.month === curMonth));
+          revenueYTD  = sum(incomeLines);
+        } catch (_e) { /* v_income_statement is optional fallback */ }
 
         setDashData({
           agency,
@@ -409,6 +504,15 @@ export default function Dashboard({ onNavigate = () => {} }) {
             revenueMTD, expensesMTD,
             netIncomeMTD: revenueMTD - expensesMTD,
             revenueYTD,
+          },
+          financialKpis: {
+            latestRecapDate: rec2026.latest,
+            sameMmDd2025: sameMmDd,
+            lastOf2025,
+            federalYtd2026, federalYtd2025, federalFull2025,
+            pcYtd2026, pcYtd2025,
+            yoyPct, pcYoyPct,
+            annualPace2026,
           },
           aipp: (() => {
             const a = aippRes.status==="fulfilled" ? aippRes.value.data : null;
