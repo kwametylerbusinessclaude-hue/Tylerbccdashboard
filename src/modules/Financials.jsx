@@ -61,14 +61,19 @@ function useFinancialsData() {
         const quarterStart = Math.floor((currentMonth - 1) / 3) * 3 + 1;
 
         const [
-          isRows, compRows, bankRows, ccRows, glRows,
+          isRows, isPriorRows, compRows, bankRows, ccRows, glRows,
           payrollRunsRes, payrollDetailRows,
-          aippRow, scoreboardRows,
+          aippRows, scoreboardRows,
         ] = await Promise.all([
-          // Income statement view
+          // Income statement view — current year
           supabase.from("v_income_statement")
             .select("account_name, account_type, amount, month, year")
             .eq("year", currentYear).order("month"),
+
+          // Income statement view — prior year (for YoY% comparison)
+          supabase.from("v_income_statement")
+            .select("account_type, amount")
+            .eq("year", currentYear - 1),
 
           // SF comp recap — real schema columns
           supabase.from("comp_recap")
@@ -106,7 +111,7 @@ function useFinancialsData() {
           // AIPP — real schema
           supabase.from("aipp_tracking")
             .select("program_year, target_amount, earned_ytd, projected_full_year, achievement_percentage, notes")
-            .order("program_year", { ascending: false }).limit(1).single(),
+            .order("program_year", { ascending: false }).limit(2),
 
           // ScoreBoard
           supabase.from("scoreboard_tracking")
@@ -164,13 +169,15 @@ function useFinancialsData() {
         }));
 
         // AIPP — alias schema fields to the names AIPPSection expects
-        const aippRaw = aippRow.data || null;
+        const aippList = aippRows.data || [];
+        const aippRaw   = aippList[0] || null;     // latest program year (e.g. 2027)
+        const aippPrior = aippList[1] || null;     // prior program year (e.g. 2026, paid Jan 2026)
         const aipp = aippRaw ? {
           year:          aippRaw.program_year || currentYear,
           target:        parseFloat(aippRaw.target_amount)        || 0,
           earned:        parseFloat(aippRaw.earned_ytd)           || 0,
           projected:     parseFloat(aippRaw.projected_full_year)  || 0,
-          priorYear:     0, // schema does not track prior year; show 0 unless populated
+          priorYear:     aippPrior ? parseFloat(aippPrior.earned_ytd) || 0 : 0,
           monthlyEarned: months.map((m,i) => {
             const mo = i + 1;
             const earned = compRecapsRaw
@@ -221,11 +228,31 @@ function useFinancialsData() {
           dueDay:  c.payment_due_day,
         }));
 
+        // Prior-year YTD income from v_income_statement (drives YoY% on Overview)
+        const priorYearYTD = (isPriorRows.data || [])
+          .filter(r => r.account_type === "income")
+          .reduce((s,r) => s + parseFloat(r.amount || 0), 0);
+
+        // Period labels — dynamic, replace stale hardcoded "Apr 2026" / "Q1 2026" headers
+        const monthAbbr = months[currentMonth - 1];
+        const quarterNum = Math.ceil(currentMonth / 3);
+        const mtdLabel = `${monthAbbr} ${currentYear}`;
+        const qtdLabel = `Q${quarterNum} ${currentYear}`;
+        const ytdLabel = `YTD ${currentYear}`;
+
         setData({
           summary: {
-            revenueMTD: Math.round(revMTD), revenueQTD: Math.round(revQTD), revenueYTD: Math.round(revYTD),
-            expensesMTD: Math.round(expMTD), netIncomeMTD: Math.round(revMTD - expMTD), netIncomeYTD: Math.round(revYTD - expYTD),
-            priorYearYTD: 442434,
+            revenueMTD:   Math.round(revMTD),
+            revenueQTD:   Math.round(revQTD),
+            revenueYTD:   Math.round(revYTD),
+            expensesMTD:  Math.round(expMTD),
+            expensesQTD:  Math.round(expQTD),
+            expensesYTD:  Math.round(expYTD),
+            netIncomeMTD: Math.round(revMTD - expMTD),
+            netIncomeQTD: Math.round(revQTD - expQTD),
+            netIncomeYTD: Math.round(revYTD - expYTD),
+            priorYearYTD: Math.round(priorYearYTD),
+            mtdLabel, qtdLabel, ytdLabel,
           },
           monthlyRevenue,
           pl: { income: incomeLines, expenses: expenseLines },
@@ -363,7 +390,7 @@ const AskBtn = ({ context, size = "normal", demoMode = false }) => {
       <button
         onClick={open ? () => { setOpen(false); setTimeout(() => { setCopied(false); setOpened(false); }, 200); } : ask}
         style={{ display: "flex", alignItems: "center", gap: 5, background: open ? T.slate100 : T.blue, color: open ? T.blue : T.white, border: open ? `1px solid ${T.blue}` : "1px solid transparent", borderRadius: 7, padding: small ? "5px 10px" : "7px 13px", fontSize: small ? 10 : 11, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0 }}
-      >\u26a1 Ask Claude</button>
+      >⚡ Ask Claude</button>
       {open && (
         <div role="dialog" aria-label="Ask Claude" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 60, width: 300, background: T.white, border: `1px solid ${T.slate100}`, borderRadius: 12, boxShadow: "0 12px 32px rgba(15,23,42,0.16)", padding: 14, textAlign: "left" }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: "#16A34A", marginBottom: 4 }}>
@@ -475,12 +502,22 @@ const OverviewSection = ({ period, setPeriod, data }) => {
         <AskBtn context={`My agency financials — ${period.toUpperCase()}: Revenue $${period==="mtd"?d.revenueMTD:period==="qtd"?d.revenueQTD:d.revenueYTD}, Expenses $${period==="mtd"?d.expensesMTD:"N/A"}, Net Income $${period==="mtd"?d.netIncomeMTD:d.netIncomeYTD}. YTD is up ${yoyPct}% vs prior year. Help me analyze my financial performance.`} />
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))", gap: 10, marginBottom: 16 }}>
-        <KPICard label="Revenue" value={fmt(period==="mtd"?d.revenueMTD:period==="qtd"?d.revenueQTD:d.revenueYTD)} sub={period==="ytd"?`↑ ${yoyPct}% vs prior year`:undefined} color={T.blue} border={T.blue} />
-        <KPICard label="Expenses" value={fmt(period==="mtd"?d.expensesMTD:period==="qtd"?Math.round(d.expensesMTD*3.1):Math.round(d.expensesMTD*4))} sub="Cash basis" border={T.amber} />
-        <KPICard label="Net Income" value={fmt(period==="mtd"?d.netIncomeMTD:period==="qtd"?Math.round(d.netIncomeMTD*2.9):d.netIncomeYTD)} color={T.green} border={T.green} />
-        <KPICard label="Expense Ratio" value={Math.round((d.expensesMTD/d.revenueMTD)*100) + "%"} sub="Target: <45%" border={T.slate200} />
-      </div>
+      {/* KPI Cards — use REAL period-scoped values (no fake multipliers), guard divide-by-zero */}
+      {(() => {
+        const rev = period==="mtd" ? d.revenueMTD : period==="qtd" ? d.revenueQTD : d.revenueYTD;
+        const exp = period==="mtd" ? d.expensesMTD : period==="qtd" ? d.expensesQTD : d.expensesYTD;
+        const net = period==="mtd" ? d.netIncomeMTD : period==="qtd" ? d.netIncomeQTD : d.netIncomeYTD;
+        const ratio = rev > 0 ? Math.round((exp / rev) * 100) + "%" : "—";
+        const yoyText = period === "ytd" && yoyPct != null ? `↑ ${yoyPct}% vs prior year` : undefined;
+        return (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px,1fr))", gap: 10, marginBottom: 16 }}>
+            <KPICard label="Revenue"       value={fmt(rev)}   sub={yoyText} color={T.blue}  border={T.blue} />
+            <KPICard label="Expenses"      value={fmt(exp)}   sub="Cash basis" border={T.amber} />
+            <KPICard label="Net Income"    value={fmt(net)}   color={T.green} border={T.green} />
+            <KPICard label="Expense Ratio" value={ratio}       sub="Target: <45%" border={T.slate200} />
+          </div>
+        );
+      })()}
 
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr)", gap: 12 }}>
         <Card>
@@ -489,7 +526,7 @@ const OverviewSection = ({ period, setPeriod, data }) => {
         </Card>
 
         <Card>
-          <CardHeader title="Income breakdown — April 2026" />
+          <CardHeader title={`Income breakdown — ${d.mtdLabel || "current period"}`} />
           {(Array.isArray(data?.pl?.income) ? data.pl.income : []).map((item, i) => (
             <div key={i} style={{ marginBottom: 10 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 3 }}>
@@ -536,9 +573,9 @@ const PLSection = ({ data }) => {
           <thead>
             <tr style={{ borderBottom: `2px solid ${T.slate200}` }}>
               <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "left" }}>Account</th>
-              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>Apr 2026</th>
-              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>Q1 2026</th>
-              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>YTD 2026</th>
+              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>{data?.summary?.mtdLabel || "MTD"}</th>
+              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>{data?.summary?.qtdLabel || "QTD"}</th>
+              <th style={{ padding: "8px 8px", fontSize: 11, fontWeight: 600, color: T.slate500, textAlign: "right" }}>{data?.summary?.ytdLabel || "YTD"}</th>
             </tr>
           </thead>
           <tbody>
