@@ -70,10 +70,11 @@ function useFinancialsData() {
             .select("account_name, account_type, amount, month, year")
             .eq("year", currentYear).order("month"),
 
-          // Income statement view — prior year (for YoY% comparison)
+          // Income statement view — prior year YTD through current month (fair YoY %)
           supabase.from("v_income_statement")
-            .select("account_type, amount")
-            .eq("year", currentYear - 1),
+            .select("account_type, amount, month")
+            .eq("year", currentYear - 1)
+            .lte("month", currentMonth),
 
           // SF comp recap — real schema columns
           supabase.from("comp_recap")
