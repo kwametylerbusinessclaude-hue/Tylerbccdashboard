@@ -1,5 +1,9 @@
 -- ============================================================
 -- BCC Schema Audit Query (diagnostic, NOT a DDL migration)
+-- Last refreshed: 2026-06-17 — added 5 master tables introduced
+--   after the original audit was written (agent_memory, bank_transactions,
+--   classification_rules, monthly_close_checklist, producer_production).
+--   Table count: 37 → 42.
 -- ============================================================
 -- (Moved from supabase/migrations/007_schema_audit.sql in May 2026
 --  to clarify that this is a diagnostic SELECT query, not a DDL
@@ -7,7 +11,7 @@
 --  in tools/ alongside the build-time schema-audit.js.)
 --
 -- Run this in the client's Supabase Studio SQL Editor during a
--- Path A (existing-database) install. It returns ~40 rows in three
+-- Path A (existing-database) install. It returns ~45 rows in three
 -- sections:
 --   1. TABLE AUDIT  — one per master table, status = ok / bridge_needed / missing
 --   2. VIEW AUDIT   — v_income_statement and v_balance_sheet status
@@ -26,7 +30,7 @@
 -- ============================================================
 -- BCC SCHEMA NORMALIZATION AUDIT
 -- Run this ONCE in client Supabase Studio.
--- Returns 37 rows, one per master table, telling you exactly
+-- Returns 42 rows, one per master table, telling you exactly
 -- what to do for each: nothing (ok), bridge a legacy name,
 -- or apply a migration to create from scratch.
 -- ============================================================
@@ -43,6 +47,17 @@ WITH audit AS (
        WHERE table_schema='public' AND table_name = ANY(ARRAY['agencies','agency_record','company']) LIMIT 1) AS legacy_name,
     ARRAY['agencies','agency_record','company']::text AS aliases_checked
 
+UNION ALL
+  SELECT
+    'agent_memory' AS master_table,
+    CASE
+      WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='agent_memory') THEN 'ok'
+      WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY(ARRAY['agent_session_log','claude_memory','session_memory'])) THEN 'bridge_needed'
+      ELSE 'missing'
+    END AS status,
+    (SELECT table_name FROM information_schema.tables
+       WHERE table_schema='public' AND table_name = ANY(ARRAY['agent_session_log','claude_memory','session_memory']) LIMIT 1) AS legacy_name,
+    ARRAY['agent_session_log','claude_memory','session_memory']::text AS aliases_checked
 UNION ALL
   SELECT
     'aipp_tracking' AS master_table,
@@ -117,6 +132,17 @@ UNION ALL
 
 UNION ALL
   SELECT
+    'bank_transactions' AS master_table,
+    CASE
+      WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='bank_transactions') THEN 'ok'
+      WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY(ARRAY['bank_txns','bank_transaction_log'])) THEN 'bridge_needed'
+      ELSE 'missing'
+    END AS status,
+    (SELECT table_name FROM information_schema.tables
+       WHERE table_schema='public' AND table_name = ANY(ARRAY['bank_txns','bank_transaction_log']) LIMIT 1) AS legacy_name,
+    ARRAY['bank_txns','bank_transaction_log']::text AS aliases_checked
+UNION ALL
+  SELECT
     'chart_of_accounts' AS master_table,
     CASE
       WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='chart_of_accounts') THEN 'ok'
@@ -127,6 +153,17 @@ UNION ALL
        WHERE table_schema='public' AND table_name = ANY(ARRAY['coa','accounts']) LIMIT 1) AS legacy_name,
     ARRAY['coa','accounts']::text AS aliases_checked
 
+UNION ALL
+  SELECT
+    'classification_rules' AS master_table,
+    CASE
+      WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='classification_rules') THEN 'ok'
+      WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY(ARRAY['classification_engine','txn_classification_rules'])) THEN 'bridge_needed'
+      ELSE 'missing'
+    END AS status,
+    (SELECT table_name FROM information_schema.tables
+       WHERE table_schema='public' AND table_name = ANY(ARRAY['classification_engine','txn_classification_rules']) LIMIT 1) AS legacy_name,
+    ARRAY['classification_engine','txn_classification_rules']::text AS aliases_checked
 UNION ALL
   SELECT
     'commission_structures' AS master_table,
@@ -297,6 +334,17 @@ UNION ALL
 
 UNION ALL
   SELECT
+    'monthly_close_checklist' AS master_table,
+    CASE
+      WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='monthly_close_checklist') THEN 'ok'
+      WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY(ARRAY['month_close_checklist','close_checklist','close_items'])) THEN 'bridge_needed'
+      ELSE 'missing'
+    END AS status,
+    (SELECT table_name FROM information_schema.tables
+       WHERE table_schema='public' AND table_name = ANY(ARRAY['month_close_checklist','close_checklist','close_items']) LIMIT 1) AS legacy_name,
+    ARRAY['month_close_checklist','close_checklist','close_items']::text AS aliases_checked
+UNION ALL
+  SELECT
     'notification_preferences' AS master_table,
     CASE
       WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='notification_preferences') THEN 'ok'
@@ -379,6 +427,17 @@ UNION ALL
        WHERE table_schema='public' AND table_name = ANY(ARRAY['job_positions','roles']) LIMIT 1) AS legacy_name,
     ARRAY['job_positions','roles']::text AS aliases_checked
 
+UNION ALL
+  SELECT
+    'producer_production' AS master_table,
+    CASE
+      WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='producer_production') THEN 'ok'
+      WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY(ARRAY['producer_premium','producer_metrics','production_monthly'])) THEN 'bridge_needed'
+      ELSE 'missing'
+    END AS status,
+    (SELECT table_name FROM information_schema.tables
+       WHERE table_schema='public' AND table_name = ANY(ARRAY['producer_premium','producer_metrics','production_monthly']) LIMIT 1) AS legacy_name,
+    ARRAY['producer_premium','producer_metrics','production_monthly']::text AS aliases_checked
 UNION ALL
   SELECT
     'scoreboard_tracking' AS master_table,
