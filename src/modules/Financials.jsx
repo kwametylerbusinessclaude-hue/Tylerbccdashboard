@@ -75,12 +75,14 @@ function useFinancialsData() {
             .select("account_type, amount, month")
             .eq("year", currentYear - 1),
 
-          // SF comp recap — real schema columns
+          // SF comp recap — half_month_activity only (the ytd_snapshot rows would
+          // double-count each line). Pull all 17 months (~1,117 rows for Tyler).
           supabase.from("comp_recap")
             .select("period_year, period_month, comp_type, comp_category, description, amount, is_aipp_eligible, is_scoreboard_eligible")
+            .eq("amount_type", "half_month_activity")
             .order("period_year", { ascending: false })
             .order("period_month", { ascending: false })
-            .limit(200),
+            .limit(2000),
 
           // Bank
           supabase.from("bank_accounts")
@@ -530,16 +532,29 @@ const OverviewSection = ({ period, setPeriod, data }) => {
         </Card>
 
         <Card>
-          <CardHeader title={`Income breakdown — ${d.mtdLabel || "current period"}`} />
-          {(Array.isArray(data?.pl?.income) ? data.pl.income : []).map((item, i) => (
-            <div key={i} style={{ marginBottom: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 3 }}>
-                <span style={{ color: T.slate600 }}>{item.name}</span>
-                <span style={{ fontWeight: 600, color: T.slate900 }}>{fmt(item.mtd)}</span>
-              </div>
-              <ProgressBar value={item.mtd || 0} max={data?.summary?.revenueMTD || 1} color={item.code?.startsWith("41") ? T.green : T.blue} />
-            </div>
-          ))}
+          {/* Period-aware income breakdown: respects the This Month / This Quarter / YTD toggle */}
+          {(() => {
+            const periodKey   = period === "mtd" ? "mtd" : period === "qtd" ? "qtd" : "ytd";
+            const periodLabel = period === "mtd" ? d.mtdLabel : period === "qtd" ? d.qtdLabel : d.ytdLabel;
+            const periodMax   = period === "mtd" ? d.revenueMTD : period === "qtd" ? d.revenueQTD : d.revenueYTD;
+            return (
+              <>
+                <CardHeader title={`Income breakdown — ${periodLabel || "current period"}`} />
+                {(Array.isArray(data?.pl?.income) ? data.pl.income : []).map((item, i) => {
+                  const v = item[periodKey] || 0;
+                  return (
+                    <div key={i} style={{ marginBottom: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 3 }}>
+                        <span style={{ color: T.slate600 }}>{item.name}</span>
+                        <span style={{ fontWeight: 600, color: T.slate900 }}>{fmt(v)}</span>
+                      </div>
+                      <ProgressBar value={v} max={periodMax || 1} color={item.code?.startsWith("41") ? T.green : T.blue} />
+                    </div>
+                  );
+                })}
+              </>
+            );
+          })()}
         </Card>
       </div>
     </div>
@@ -856,7 +871,24 @@ const CreditSection = ({ data }) => {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 10, marginBottom: 4 }}>
         <KPICard label="Total Debt Exposure" value={fmt(totalDebt)} color={T.red} border={T.red} />
         <KPICard label="Available Credit" value={fmt(totalAvailable)} color={T.green} border={T.green} />
-        <KPICard label="Next Payment Due" value="May 1" sub="SBA Loan — $1,847" border={T.amber} />
+        {(() => {
+          // Compute Next Payment Due from REAL credit_accounts data (no hardcoded SBA Loan).
+          // Shows the earliest upcoming payment across all credit accounts that have a dueDay set.
+          const today = new Date();
+          const upcoming = (data.creditAccounts || [])
+            .filter(a => a.dueDay && (a.payment || a.balance > 0))
+            .map(a => {
+              let due = new Date(today.getFullYear(), today.getMonth(), a.dueDay);
+              if (due < today) due = new Date(today.getFullYear(), today.getMonth() + 1, a.dueDay);
+              return { name: a.name, due, payment: a.payment || 0 };
+            })
+            .sort((x, y) => x.due - y.due)[0];
+          const value = upcoming ? upcoming.due.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—";
+          const sub   = upcoming
+            ? `${upcoming.name.split(" ").slice(0,3).join(" ")} — ${upcoming.payment ? fmt(upcoming.payment) : "min TBD"}`
+            : "No scheduled payments";
+          return <KPICard label="Next Payment Due" value={value} sub={sub} border={T.amber} />;
+        })()}
       </div>
 
       {(data.creditAccounts || []).map((a, i) => (
@@ -888,7 +920,13 @@ const CreditSection = ({ data }) => {
             </div>
             <div>
               <div style={{ fontSize: 10, color: T.slate500, marginBottom: 2 }}>Due Date</div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: T.slate800 }}>May {a.dueDay}</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: T.slate800 }}>{(() => {
+                if (!a.dueDay) return "—";
+                const t = new Date();
+                let nd = new Date(t.getFullYear(), t.getMonth(), a.dueDay);
+                if (nd < t) nd = new Date(t.getFullYear(), t.getMonth() + 1, a.dueDay);
+                return nd.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+              })()}</div>
             </div>
           </div>
 
