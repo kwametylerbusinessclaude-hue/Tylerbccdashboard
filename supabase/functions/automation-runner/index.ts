@@ -126,6 +126,34 @@
 //   automation_runner_cron_secret in settings.
 // =========================================================================
 
+// =========================================================================
+// 2026-06-18 REFACTOR v9 — Doc Processor v2.2: OCR-then-text-Groq parse leg
+// =========================================================================
+// REPLACES the broken v2.0 multimodal path. COMPOSIO_SEARCH_GROQ_CHAT rejects
+// multimodal content blocks (validated 2026-06-17 — every multimodal Groq model
+// in Composio's allowlist returns HTTP 400 on image_url payloads). The fix:
+//
+//   1. Download PDF via fetchPdfBase64 (unchanged)
+//   2. OCR via COMPOSIO_REMOTE_WORKBENCH + smart_file_extract (NEW)
+//   3. Text-mode Groq parse via callComposioLLM + PARSER_PROMPT (existing,
+//      now fed OCR text instead of multimodal PDF)
+//   4. fixOneNumberLines() safety net against OCR text (NEW — ports the
+//      2026-06-16 P2β logic that was lost in a sandbox reset)
+//   5. dropAggregateLines() defensive filter (NEW — catches LLM-retained
+//      aggregate rows like "PAYABLE PER AGREEMENT")
+//   6. applyDescRules → transformToIngestPayload → sf_comp_recap_ingest
+//      (unchanged)
+//
+// PARSER_PROMPT extended to also emit totals.total_with_benefits_half_pdf and
+// totals.total_with_benefits_ytd_pdf (page-2 gross + page-3 BENEFITS lines),
+// piped through transformToIngestPayload into reconciliation.* so migration
+// 031's benefits-aware reconciliation matches against the inclusive total.
+//
+// Still gated by input_config.groq_parse_enabled (default false). Flip to
+// true is v2.3 ship after dry-run validation against the May 15 2026 fixture.
+//
+// callComposioMultimodalLLM is retained but unused — removable in v10.
+
 // deno-lint-ignore-file no-explicit-any
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -146,6 +174,13 @@ const LLM_MODEL_DEFAULT = "llama-3.3-70b-versatile";
 // with the existing manual Python parser; if not, swap to another Groq
 // vision model without redeploying by patching input_config.
 const LLM_MODEL_MULTIMODAL_DEFAULT = "meta-llama/llama-4-scout-17b-16e-instruct";
+
+// v9: OCR path for Doc Processor v2.2.  COMPOSIO_REMOTE_WORKBENCH runs Python in
+// a Composio-hosted sandbox; we POST a one-shot script that downloads the PDF
+// and runs smart_file_extract (PyMuPDF text-layer with tesseract OCR fallback).
+// Sandbox cold-start adds ~10-20s on the first call per recipe run; acceptable
+// for a 30-minute cron.
+const COMPOSIO_WORKBENCH_TOOL = "COMPOSIO_REMOTE_WORKBENCH";
 
 function stripFences(s: string): string {
   return s.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
@@ -930,9 +965,20 @@ RULES:
 (2) Trailing minus = negative. "528.47-" is -528.47.
 (3) Strip OCR spaces inside numbers: "19 , 360.26" = 19360.26.
 (4) Capture EVERY line item including zero or negative.
-(5) SKIP aggregate lines: anything starting with "TOTAL ", GROSS COMPENSATION,
-    ADJUSTED GROSS, LESS DEDUCTIONS, NET PAYABLE, PER SCHEDULES OF PAYMENT,
-    YOUR CHECK FOR, REQUESTED 100%, state-by-state YTD totals at bottom of page 3.
+(5) SKIP aggregate lines from line_items: anything starting with "TOTAL ",
+    GROSS COMPENSATION, ADJUSTED GROSS, LESS DEDUCTIONS, NET PAYABLE, PER
+    SCHEDULES OF PAYMENT, YOUR CHECK FOR, REQUESTED 100%, state-by-state YTD
+    totals at bottom of page 3.  These are aggregates — capture them in totals
+    (see below), NOT in line_items.
+(5b) COMPUTE two reconciliation totals (do both — they are usually different):
+    - gross_compensation_half_pdf / gross_compensation_ytd_pdf: the page-2
+      "GROSS COMPENSATION" line numbers as printed.
+    - total_with_benefits_half_pdf / total_with_benefits_ytd_pdf: page-2 gross
+      PLUS each page-3 BENEFITS line (MEDICAL INSURANCE CONTRIBUTION, GROUP
+      DENTAL, DENTAL INSURANCE CONTRIBUTION, LIFE INSURANCE CONTRIBUTION,
+      AMBASSADOR TRAVEL benefits, INCOME UPDATE benefits).  If page 3 has no
+      BENEFITS section, total_with_benefits_*_pdf equals gross_compensation_*_pdf.
+    Both totals are needed for downstream reconciliation.
 (6) Capture: AUTO/STD AUTO/FIRE/HEALTH NEW BUSINESS, NEW-AMD66, RENEWAL SERVICE,
     RENEWAL-AMD66; FIRE ALLIANCE RENEWAL; FIRST YEAR WRITING, RENEWAL WRITING,
     SERVICING (SFL); IPSI PET INSURANCE / IPSI PET INSURANCE - RENEW; US BANK
@@ -959,8 +1005,8 @@ RULES:
     - "AMBASSADOR TRAVEL - <PRODUCT>" (no "ALLOWANCE") → BENEFITS (page 3, Reportable Benefits)
     Both can appear in the same recap as separate line items.
 
-ALSO capture the half-month and YTD GROSS COMPENSATION totals reported on the
-PDF — source-of-truth for reconciliation.
+ALSO capture both totals as instructed in rule (5b) above — source-of-truth
+for reconciliation.
 
 Return ONLY raw JSON (no markdown fences, no commentary), with this shape:
 {
@@ -974,7 +1020,11 @@ Return ONLY raw JSON (no markdown fences, no commentary), with this shape:
   "recap_date": "2026-05-15",
   "totals": {
     "half_month_total_pdf": 266777.60,
-    "ytd_total_pdf": 1097824.69
+    "ytd_total_pdf": 1097824.69,
+    "gross_compensation_half_pdf": 266777.60,
+    "gross_compensation_ytd_pdf": 1097824.69,
+    "total_with_benefits_half_pdf": 267212.60,
+    "total_with_benefits_ytd_pdf": 1103064.69
   },
   "line_items": [
     {
@@ -1104,14 +1154,27 @@ function transformToIngestPayload(llmOut: any): any {
     is_aipp_eligible: Boolean(li?.is_aipp_eligible),
     is_scoreboard_eligible: Boolean(li?.is_scoreboard_eligible),
   }));
+  // v9: prefer explicit gross_compensation_*_pdf fields (rule 5b) when present;
+  // fall back to legacy half_month_total_pdf / ytd_total_pdf for back-compat.
+  const halfGross = totals?.gross_compensation_half_pdf ?? totals?.half_month_total_pdf;
+  const ytdGross  = totals?.gross_compensation_ytd_pdf  ?? totals?.ytd_total_pdf;
+  // total_with_benefits_*_pdf is optional — only emitted when page 3 has BENEFITS.
+  // Migration 031 picks reconciliation target: if both with-benefits fields are
+  // present, ingest reconciles against them; otherwise legacy gross-only.
   return {
     period_year: llmOut?.period_year,
     period_month: llmOut?.period_month,
     period_half: llmOut?.period_half,
     recap_date: llmOut?.recap_date,
     reconciliation: {
-      half_month_total_pdf: totals?.half_month_total_pdf,
-      ytd_total_pdf: totals?.ytd_total_pdf,
+      half_month_total_pdf: halfGross,
+      ytd_total_pdf: ytdGross,
+      ...(totals?.total_with_benefits_half_pdf !== undefined
+        ? { total_with_benefits_half_pdf: totals.total_with_benefits_half_pdf }
+        : {}),
+      ...(totals?.total_with_benefits_ytd_pdf !== undefined
+        ? { total_with_benefits_ytd_pdf: totals.total_with_benefits_ytd_pdf }
+        : {}),
     },
     lines,
   };
@@ -1158,6 +1221,157 @@ async function fetchPdfBase64(url: string, timeoutMs: number): Promise<string> {
 // expects image MIME (jpeg/png).  If model rejects, Phase v2.1 will swap
 // to an OCR-then-text pathway.  This implementation is the structural
 // landing target; the model swap is a 1-line input_config change.
+// =========================================================================
+// v9 Doc Processor v2.2 helpers — OCR, single-number fix, aggregate filter
+// =========================================================================
+
+// callComposioOCR — POST a one-shot Python script to COMPOSIO_REMOTE_WORKBENCH
+// that downloads the PDF from a URL and runs smart_file_extract (the Composio
+// sandbox helper that auto-falls-back PyMuPDF text-layer → tesseract OCR).
+// Returns the raw OCR text plus character count for downstream sanity checks.
+async function callComposioOCR(opts: {
+  apiKey: string;
+  userId: string;
+  pdfUrl: string;
+  timeoutMs?: number;
+  maxRetries?: number;
+}): Promise<{ ok: boolean; text: string; chars: number; error: string | null }> {
+  const timeoutMs = Number(opts.timeoutMs ?? 90_000);
+  const retries = Math.max(1, Number(opts.maxRetries ?? 2));
+
+  // Embedded Python script — escape backslashes/quotes for JSON safety.
+  // smart_file_extract is preloaded in the Composio workbench sandbox.
+  const pyCode = [
+    "import urllib.request, json, os",
+    `with urllib.request.urlopen(${JSON.stringify(opts.pdfUrl)}, timeout=${Math.floor(timeoutMs/1000)}) as _r, open('/tmp/p.pdf','wb') as _f:`,
+    "    _f.write(_r.read())",
+    "_text, _err = smart_file_extract('/tmp/p.pdf', show_preview=False)",
+    "if _err:",
+    "    print(json.dumps({'ok': False, 'error': str(_err), 'text': '', 'chars': 0}))",
+    "else:",
+    "    print(json.dumps({'ok': True, 'error': None, 'text': _text or '', 'chars': len(_text or '')}))",
+  ].join("\n");
+
+  const args = { code_to_execute: pyCode, thought: "Doc Processor v2.2 OCR pass", current_step: "OCR_PDF" };
+
+  let lastErr = "unknown";
+  for (let attempt = 0; attempt < retries; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${COMPOSIO_BASE}/${COMPOSIO_WORKBENCH_TOOL}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": opts.apiKey },
+        body: JSON.stringify({ user_id: opts.userId, arguments: args }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+      const text = await res.text();
+      let parsed: any = {};
+      try { parsed = JSON.parse(text); } catch { /* ignore */ }
+      if (!res.ok || !parsed?.successful) {
+        lastErr = parsed?.error?.message || parsed?.error || `HTTP ${res.status}`;
+        await sleep(2000 * (attempt + 1));
+        continue;
+      }
+      // Workbench returns { data: { results, stdout, stderr, error, sandbox_id_suffix } }
+      const stdout = String(parsed?.data?.stdout ?? parsed?.data?.results ?? "").trim();
+      if (!stdout) {
+        lastErr = "workbench stdout empty";
+        await sleep(2000 * (attempt + 1));
+        continue;
+      }
+      // The Python script's last print line is the JSON payload.
+      const lastLine = stdout.split(/\r?\n/).filter((l) => l.trim()).pop() || "";
+      let payload: any;
+      try { payload = JSON.parse(lastLine); }
+      catch (e) {
+        lastErr = `OCR script output not JSON: ${(e as Error).message}; stdout tail: ${stdout.slice(-200)}`;
+        await sleep(2000 * (attempt + 1));
+        continue;
+      }
+      if (!payload?.ok) {
+        lastErr = `smart_file_extract failed: ${payload?.error || "unknown"}`;
+        await sleep(2000 * (attempt + 1));
+        continue;
+      }
+      return { ok: true, text: String(payload.text), chars: Number(payload.chars || 0), error: null };
+    } catch (e) {
+      clearTimeout(timer);
+      lastErr = e instanceof Error ? e.message : String(e);
+      await sleep(2000 * (attempt + 1));
+    }
+  }
+  return { ok: false, text: "", chars: 0, error: lastErr };
+}
+
+
+// fixOneNumberLines — OCR-grounded safety net for the LLM line_items output.
+// The LLM occasionally collapses or swaps the (current, ytd) column pair on
+// lines where OCR ran them together.  We re-scan the OCR text for each line's
+// description, count decimal numbers via NUM_PAT, and re-assign:
+//   1 number found  → current = 0, ytd = the one number
+//   2+ numbers found → current = first, ytd = second
+//   0 numbers / no match → leave the item unchanged (LLM judgement stands)
+const NUM_PAT = /-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?-?/g;
+
+function parseRecapAmount(s: string): number {
+  const trailingMinus = s.endsWith("-");
+  const cleaned = s.replace(/,/g, "").replace(/-$/, "");
+  const n = parseFloat(cleaned);
+  if (!Number.isFinite(n)) return NaN;
+  return trailingMinus ? -n : n;
+}
+
+function fixOneNumberLines(items: any[], ocrText: string): any[] {
+  if (!ocrText) return items;
+  const ocrLines = ocrText.split(/\r?\n/);
+  return (items || []).map((item) => {
+    const desc = String(item?.description || "").toUpperCase().trim();
+    if (!desc) return item;
+    // Find the first OCR line that contains the description's first 4+ word tokens.
+    // (Tolerates trailing OCR junk like "RPRPPRPRP" on the description line.)
+    const descPrefix = desc.split(/\s+/).slice(0, 4).join(" ");
+    const matchLine = ocrLines.find((l) => l.toUpperCase().includes(descPrefix));
+    if (!matchLine) return item;
+    const matches = matchLine.match(NUM_PAT) || [];
+    const nums = matches.map(parseRecapAmount).filter((n) => Number.isFinite(n));
+    if (nums.length === 1) return { ...item, current_amount: 0, ytd_amount: nums[0] };
+    if (nums.length >= 2) return { ...item, current_amount: nums[0], ytd_amount: nums[1] };
+    return item;
+  });
+}
+
+
+// dropAggregateLines — defensive filter for LLM-retained aggregates.  The
+// PARSER_PROMPT explicitly tells the model to skip these, but it occasionally
+// retains them in line_items anyway (notably "PAYABLE PER AGREEMENT").
+const AGGREGATE_PREFIXES = [
+  "TOTAL ",
+  "GROSS COMPENSATION",
+  "ADJUSTED GROSS",
+  "LESS DEDUCTIONS",
+  "NET PAYABLE",
+  "PER SCHEDULES OF PAYMENT",
+  "PAYABLE PER AGREEMENT",
+  "YOUR CHECK FOR",
+  "REQUESTED 100%",
+  "TOTAL FEDERAL",
+  "TOTAL REPORTABLE",
+];
+
+function dropAggregateLines(items: any[]): any[] {
+  return (items || []).filter((li) => {
+    const d = String(li?.description || "").toUpperCase().trim();
+    if (!d) return false;
+    return !AGGREGATE_PREFIXES.some((p) => d.startsWith(p));
+  });
+}
+
+
+// =========================================================================
+
+
 async function callComposioMultimodalLLM(opts: {
   apiKey: string;
   userId: string;
@@ -1270,15 +1484,31 @@ async function stageCParse(opts: {
     return { status: "parse_failed", records: 0, error: msg };
   }
 
-  // 2. Call multimodal LLM
-  const llmRes = await callComposioMultimodalLLM({
+  // 2. OCR the PDF via Composio Workbench (v9 — replaces v2.0 broken multimodal)
+  const ocrRes = await callComposioOCR({
     apiKey: opts.composioApiKey,
     userId: opts.composioUserId,
-    pdfBase64,
-    prompt: PARSER_PROMPT,
-    model: opts.parseLLMModel,
+    pdfUrl: opts.pdfUrl,
+    timeoutMs: opts.parseTimeoutMs ?? 90_000,
     maxRetries: opts.parseMaxRetries,
-    timeoutMs: opts.parseTimeoutMs ?? 60_000,
+  });
+  if (!ocrRes.ok || !ocrRes.text) {
+    const msg = `ocr: ${ocrRes.error}`;
+    await sb.rpc("mark_document_parsed", {
+      p_doc_id: opts.documentId, p_status: "parse_failed",
+      p_records: 0, p_error: msg, p_tables: null, p_response: null,
+    });
+    return { status: "parse_failed", records: 0, error: msg };
+  }
+
+  // 3. Text-mode Groq parse via PARSER_PROMPT + OCR text
+  const llmRes = await callComposioLLM({
+    composioApiKey: opts.composioApiKey,
+    composioUserId: opts.composioUserId,
+    systemPrompt: PARSER_PROMPT,
+    userContent: ocrRes.text,
+    model: opts.parseLLMModel || LLM_MODEL_DEFAULT,
+    maxTokens: 8000,
   });
   if (!llmRes.ok || !llmRes.data) {
     const msg = `llm: ${llmRes.error}`;
@@ -1289,19 +1519,39 @@ async function stageCParse(opts: {
     return { status: "parse_failed", records: 0, error: msg };
   }
 
-  // 3. Schema validation
-  const schemaErr = validateLLMOutput(llmRes.data);
+  // 3a. callComposioLLM returns chat-completion shape — extract content + JSON-parse
+  let parsedOut: any;
+  try {
+    const content = stripFences(String(
+      llmRes.data?.choices?.[0]?.message?.content ?? llmRes.data?.content ?? ""
+    ));
+    parsedOut = JSON.parse(content);
+  } catch (e) {
+    const msg = `llm_parse: ${e instanceof Error ? e.message : e}`;
+    await sb.rpc("mark_document_parsed", {
+      p_doc_id: opts.documentId, p_status: "parse_failed",
+      p_records: 0, p_error: msg, p_tables: null, p_response: llmRes.data ?? null,
+    });
+    return { status: "parse_failed", records: 0, error: msg };
+  }
+
+  // 4. Schema validation
+  const schemaErr = validateLLMOutput(parsedOut);
   if (schemaErr) {
     await sb.rpc("mark_document_parsed", {
       p_doc_id: opts.documentId, p_status: "parse_failed",
       p_records: 0, p_error: `schema: ${schemaErr}`, p_tables: null,
-      p_response: llmRes.data,
+      p_response: parsedOut,
     });
     return { status: "parse_failed", records: 0, error: `schema: ${schemaErr}` };
   }
 
-  // 4. Apply DESC_RULES (deterministic post-process)
-  const enriched = { ...llmRes.data, line_items: applyDescRules(llmRes.data.line_items) };
+  // 4a. v9 safety nets: fix one-number lines against OCR + drop aggregate rows
+  const fixedItems = fixOneNumberLines(parsedOut.line_items, ocrRes.text);
+  const filteredItems = dropAggregateLines(fixedItems);
+
+  // 4b. Apply DESC_RULES (deterministic post-process)
+  const enriched = { ...parsedOut, line_items: applyDescRules(filteredItems) };
 
   // 5. Transform to ingest payload
   const payload = transformToIngestPayload(enriched);
