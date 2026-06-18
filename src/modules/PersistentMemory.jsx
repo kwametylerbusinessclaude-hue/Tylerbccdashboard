@@ -2,32 +2,23 @@ import { useState, useEffect, useRef } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 
 // ============================================================
-// BCC PERSISTENT MEMORY MODULE v1.0
-// Business Command Center — State Farm Agent Edition
+// BCC PERSISTENT MEMORY MODULE v2.0
+// Business Command Center — Tyler Insurance and Financial Services LLC
 // Built by Imaginary Farms LLC · imaginary-farms.com
 //
+// v2.0 (2026-06-18): Wired to live persistent_memory table.
+//   Mock data removed. Live read + write + soft delete.
+//   Adds full category coverage (15 real DB categories), with
+//   session_note + rebecca_handoff_flag collapsed by default
+//   (audit trail kept available, primary brain stays focused).
+//
 // PURPOSE:
-// The agency brain. Everything Claude needs to know about
-// this business lives here. Editable by owner or Claude.
-// Categories mirror persistent_memory table in Supabase.
+// The agency brain. Every entry here is passed to Claude as
+// context at the start of each conversation.
 //
-// CATEGORIES:
-//   agency_profile      — Entity, licenses, contacts
-//   staff               — Team members and roles
-//   business_rules      — Rules Claude must always follow
-//   financial_context   — Accounting setup, CPA, comp structure
-//   goals               — Current targets and priorities
-//   relationships       — Key contacts and vendors
-//   compliance_notes    — Agent-specific compliance reminders
-//
-// DATA: Reads/writes persistent_memory table in Supabase
-// In production replace MOCK_MEMORY with:
-//   const { data } = await supabase
-//     .from('persistent_memory')
-//     .select('*')
-//     .eq('agency_id', agencyId)
-//     .eq('is_active', true)
-//     .order('category')
+// DATA: Reads/writes public.persistent_memory in Supabase.
+//   Soft delete sets is_active=false. New rows insert with
+//   added_by='owner_manual', source='web_app_edit'.
 // ============================================================
 
 
@@ -36,16 +27,26 @@ const T = {
   navy:    "#1B2B4B",
   blue:    "#2D7DD2",
   blueLt:  "#EFF6FF",
+  indigo:  "#4F46E5",
+  indigoLt:"#EEF2FF",
   green:   "#10B981",
   greenLt: "#D1FAE5",
+  emerald: "#059669",
+  emeraldLt:"#ECFDF5",
   amber:   "#F59E0B",
   amberLt: "#FEF3C7",
+  orange:  "#EA580C",
+  orangeLt:"#FFF7ED",
   red:     "#EF4444",
   redLt:   "#FEE2E2",
   purple:  "#7C3AED",
   purpleLt:"#EDE9FE",
+  pink:    "#DB2777",
+  pinkLt:  "#FCE7F3",
   teal:    "#0D9488",
   tealLt:  "#CCFBF1",
+  cyan:    "#0891B2",
+  cyanLt:  "#ECFEFF",
   slate50: "#F8FAFC",
   slate100:"#F1F5F9",
   slate200:"#E2E8F0",
@@ -60,160 +61,35 @@ const T = {
 };
 
 // ─── Category Config ──────────────────────────────────────────
+// `collapsed: true` means the section starts hidden in the "All
+// Memories" view (audit-trail buckets). They still appear in the
+// sidebar with full counts and open normally when clicked into.
 const CATEGORIES = [
-  { id: "agency_profile",    label: "Agency Profile",    icon: "🏢", color: T.blue,   colorLt: T.blueLt,   description: "Entity details, licensing, contact information" },
-  { id: "staff",             label: "Staff & Team",      icon: "👥", color: T.purple, colorLt: T.purpleLt, description: "Team members, roles, employment details" },
-  { id: "business_rules",    label: "Business Rules",    icon: "⚙️", color: T.navy,   colorLt: T.slate100, description: "Rules Claude must always follow in every conversation" },
-  { id: "financial_context", label: "Financial Context", icon: "💰", color: T.green,  colorLt: T.greenLt,  description: "Accounting setup, CPA details, compensation structure" },
-  { id: "goals",             label: "Goals & Priorities",icon: "🎯", color: T.amber,  colorLt: T.amberLt,  description: "Current targets, priorities, milestones" },
-  { id: "relationships",     label: "Key Relationships", icon: "🤝", color: T.teal,   colorLt: T.tealLt,   description: "CPA, vendors, SF contacts, key business relationships" },
-  { id: "compliance_notes",  label: "Compliance Notes",  icon: "🛡️", color: T.red,    colorLt: T.redLt,    description: "Agency-specific compliance reminders and notes" },
+  { id: "agency_profile",      label: "Agency Profile",       icon: "🏢", color: T.blue,    colorLt: T.blueLt,    description: "Entity details, licensing, contacts" },
+  { id: "business_context",    label: "Business Context",     icon: "📊", color: T.indigo,  colorLt: T.indigoLt,  description: "Current business state and posture" },
+  { id: "goals",               label: "Goals & Priorities",   icon: "🎯", color: T.amber,   colorLt: T.amberLt,   description: "Targets, priorities, milestones" },
+  { id: "financial_context",   label: "Financial Context",    icon: "💰", color: T.green,   colorLt: T.greenLt,   description: "Accounting setup, CPA, comp structure" },
+  { id: "aipp_intelligence",   label: "AIPP Intelligence",    icon: "📈", color: T.emerald, colorLt: T.emeraldLt, description: "AIPP formulas, ScoreBoard L&H multiplier, comp_recap query patterns" },
+  { id: "sf_compensation",     label: "SF Compensation",      icon: "💵", color: T.teal,    colorLt: T.tealLt,    description: "1099, federal totals, year-end packets" },
+  { id: "key_contacts",        label: "Key Contacts",         icon: "🤝", color: T.cyan,    colorLt: T.cyanLt,    description: "CPA, SF field, install partner, vendors" },
+  { id: "accounting_rules",    label: "Accounting Rules",     icon: "📒", color: T.slate700,colorLt: T.slate100,  description: "Cash basis, PFA, equity, income map" },
+  { id: "business_rules",      label: "Business Rules",       icon: "⚙️", color: T.navy,    colorLt: T.slate100,  description: "Standing rules — GL writers, BENEFITS wash, mapping" },
+  { id: "compliance_rules",    label: "Compliance Rules",     icon: "🛡️", color: T.red,     colorLt: T.redLt,     description: "AA05 word rules, prohibited topics, social checklist" },
+  { id: "operational_rules",   label: "Operational Rules",    icon: "🔧", color: T.orange,  colorLt: T.orangeLt,  description: "GL cutover, role clarification, hard-learned patterns" },
+  { id: "communication_prefs", label: "Communication Prefs",  icon: "💬", color: T.pink,    colorLt: T.pinkLt,    description: "Tone, channels, timezone, response style" },
+  { id: "technical_state",     label: "Technical State",      icon: "🔬", color: T.purple,  colorLt: T.purpleLt,  description: "Edge Function versions, schema notes, migrations" },
+  { id: "session_note",        label: "Session Notes",        icon: "📝", color: T.slate500,colorLt: T.slate100,  description: "Chronological handoff log between Claude sessions", collapsed: true },
+  { id: "rebecca_handoff_flag",label: "Archived Flags",       icon: "🗄️", color: T.slate400,colorLt: T.slate100,  description: "Archived install-era flags (retained for audit)", collapsed: true },
 ];
 
-// ─── Mock Data ────────────────────────────────────────────────
-const MOCK_MEMORY = [
-  // Agency Profile
-  {
-    id: "1", category: "agency_profile", title: "Agency Overview",
-    content: `Agency Name: Smith Insurance Agency
-Owner: Jane Smith
-Entity Type: S-Corporation
-SF Agent Code: IL 22-441A
-Licensed States: IL, WI, IN
-Primary Email: jane@smithagency.com
-Phone: (312) 555-0182
-Address: 1420 N. Michigan Ave, Suite 301, Chicago, IL 60610
-BCC Setup Date: April 15, 2026`,
-    added_by: "system", source: "initial_setup",
-  },
-  {
-    id: "2", category: "agency_profile", title: "Business Context",
-    content: `Jane has operated this agency since 2018. Prior career in banking gave her strong financial acumen. Agency focus is personal lines with a growing commercial book. Located in the suburban Chicago market, high competition area. Jane reviews her BCC every morning before 9AM and prefers direct, concise communication with bullet points for action items.`,
-    added_by: "system", source: "discovery_call",
-  },
+const CATEGORY_BY_ID = Object.fromEntries(CATEGORIES.map(c => [c.id, c]));
 
-  // Staff
-  {
-    id: "3", category: "staff", title: "Team Overview",
-    content: `Current Team (3 staff):
-
-1. Marcus Thompson — Licensed Sales Agent (W-2)
-   Start: Jan 2022 · Salary: $52,000 + commission
-   Licensed: IL, WI · Strong life insurance producer
-   Email: marcus@smithagency.com
-
-2. Priya Patel — Office Manager (W-2, unlicensed)
-   Start: Mar 2020 · Salary: $42,000
-   Handles operations, billing, client service
-   Email: priya@smithagency.com
-
-3. Tyler Smith — Part-time Support (W-2, family)
-   Start: Jun 2024 · Hourly: $18/hr
-   Jane's son. Works 20hrs/wk. Below standard deduction.
-   No FIT withheld. Flag for CPA at year-end for W-2.`,
-    added_by: "system", source: "discovery_call",
-  },
-
-  // Business Rules
-  {
-    id: "4", category: "business_rules", title: "Accounting Rules",
-    content: `1. Cash basis ONLY — revenue counts when money hits the bank account. Never count pending or promised payments as current revenue.
-2. PFA (Policy Financing Arrangement) is NOT a business asset. It does not appear on the balance sheet. It is a SF compliance item only.
-3. Owner draws and S-Corp distributions are equity transactions — never expenses.
-4. Owner W-2 wages must reflect reasonable compensation for S-Corp — flag for CPA annually.
-5. Always reconcile COMP_RECAP to GL before closing a period.
-6. Tyler Smith (family employee) requires W-2 at year-end. No FIT withheld — below standard deduction threshold. Review with Steven Bonventre.
-7. S-Corp Medical premiums for Jane are tracked in account 6115 and added to W-2 Box 1.`,
-    added_by: "system", source: "if_standard_rules",
-  },
-  {
-    id: "5", category: "business_rules", title: "SF Compliance Rules",
-    content: `1. Never suggest social media content that promises specific rates or savings.
-2. All advertising must be pre-approved by SF before publishing.
-3. Required disclosures must appear on all marketing materials.
-4. Flag license renewal deadlines 60 days in advance.
-5. Flag E&O insurance renewal 90 days before expiration.
-6. PFA activity should be reviewed with CPA annually.
-7. No rebating or inducements to policyholders.
-8. Do not suggest content that could be confused with official SF corporate communications.`,
-    added_by: "system", source: "if_compliance_rules",
-  },
-  {
-    id: "6", category: "business_rules", title: "Communication Preferences",
-    content: `- Direct and concise. No fluff.
-- Use bullet points for action items.
-- Flag financial issues immediately — do not soften bad news.
-- Jane reviews BCC every morning before 9AM.
-- Prefers email briefings over in-app notifications for critical items.
-- When recommending actions, lead with the most important item.`,
-    added_by: "system", source: "discovery_call",
-  },
-
-  // Financial Context
-  {
-    id: "7", category: "financial_context", title: "Accounting & Tax Setup",
-    content: `Entity: S-Corporation (elected 2019)
-Fiscal Year: Calendar Year (Jan–Dec)
-Accounting Method: Cash Basis
-Payroll Provider: Gusto (bi-weekly)
-CPA: Steven Bonventre at Club Capital Tax LLC
-CPA Email: steven@clubcapitaltax.com
-CPA Phone: (312) 555-0198
-Owner W-2 Salary: $85,000/year (reasonable comp)
-S-Corp Distributions: Separate from salary, tracked in equity
-S-Corp Medical: Jane's health insurance added to W-2 Box 1`,
-    added_by: "system", source: "discovery_call",
-  },
-  {
-    id: "8", category: "financial_context", title: "SF Compensation Structure",
-    content: `AIPP Target 2026: $142,000
-Prior Year AIPP Actual 2025: $138,200
-ScoreBoard Participation: Yes — targeting President level
-Primary Revenue Lines: Auto, Home, Life, Personal Articles
-Multi-State Comp: IL (primary), WI, IN — all comp reported on IL COMP_RECAP
-COMP_RECAP: Received monthly from SF, imported via Doc Importer`,
-    added_by: "system", source: "discovery_call",
-  },
-
-  // Goals
-  {
-    id: "9", category: "goals", title: "2026 Goals",
-    content: `1. Hit AIPP target of $142,000 (currently at 47.5% — on track)
-2. Grow new business premium by 15% vs 2025
-3. Add one licensed team member by Q3 2026
-4. Achieve ScoreBoard President recognition
-5. Reduce operating expense ratio below 45%
-6. Complete full BCC data migration by end of April
-7. Launch social media content calendar — 4 posts/week`,
-    added_by: "system", source: "discovery_call",
-  },
-
-  // Relationships
-  {
-    id: "10", category: "relationships", title: "Key Contacts",
-    content: `CPA: Steven Bonventre — Club Capital Tax LLC — steven@clubcapitaltax.com
-SF Field Leader: Michael Torres — michael.torres@statefarm.com (personal email on file)
-Payroll: Gusto support — support@gusto.com
-E&O Insurance: Hartford — policy #HRT-8821-IL — renews Aug 2026
-Attorney: Davis & Park LLC — Michelle Park — (312) 555-0211
-Landlord: Midwest Properties LLC — lease expires Dec 2027
-IT Support: TechForce Chicago — helpdesk@techforcechicago.com`,
-    added_by: "system", source: "discovery_call",
-  },
-
-  // Compliance Notes
-  {
-    id: "11", category: "compliance_notes", title: "Agency-Specific Compliance Reminders",
-    content: `- IL license renewal due: October 2026 — also covers WI and IN non-resident
-- CE hours required: 24 hours IL by Oct 2026 — 14 hours completed as of Apr 2026
-- E&O renewal: August 2026 — flag 90 days out (May 2026)
-- Annual social media audit: Due by Nov 2026
-- Privacy notice distribution: Due by Nov 2026
-- W-2 filing: January 31, 2027 for 2026 tax year
-- Tyler Smith family employment: Review with Steven at year-end for proper W-2 treatment`,
-    added_by: "system", source: "discovery_call",
-  },
-];
+// Fallback config for any category that exists in the DB but isn't
+// listed above. Keeps the UI from dropping rows silently.
+const UNKNOWN_CATEGORY = {
+  id: "unknown", label: "Other", icon: "•", color: T.slate500, colorLt: T.slate100,
+  description: "Uncategorized entries", collapsed: true,
+};
 
 // ─── Shared Components ────────────────────────────────────────
 const AskBtn = ({ context, size = "normal", demoMode = false }) => {
@@ -257,7 +133,7 @@ const AskBtn = ({ context, size = "normal", demoMode = false }) => {
               </button>
             ) : demoMode ? (
               <div style={{ background: "#FFFBEB", border: "1px solid #D9770633", borderRadius: 8, padding: "8px 11px", fontSize: 11, lineHeight: 1.55, color: "#D97706" }}>
-                <strong>Demo mode.</strong> On a real BCC this opens the agent's own Claude.ai, ready to paste.
+                <strong>Demo mode.</strong> On a real BCC this opens the agent\u2019s own Claude.ai, ready to paste.
               </div>
             ) : (
               <div style={{ background: "#ECFDF3", border: "1px solid #16A34A33", borderRadius: 8, padding: "8px 11px", fontSize: 11, lineHeight: 1.55, color: "#16A34A" }}>
@@ -277,9 +153,13 @@ const AskBtn = ({ context, size = "normal", demoMode = false }) => {
 // ─── Memory Card ──────────────────────────────────────────────
 const MemoryCard = ({ item, categoryConfig, onEdit }) => {
   const [expanded, setExpanded] = useState(false);
-  const lines = item.content.split("\n").filter(Boolean);
+  const content = item.content || "";
+  const lines = content.split("\n").filter(Boolean);
   const preview = lines.slice(0, 3).join("\n");
   const hasMore = lines.length > 3;
+  const sourceDisplay = (item.source || "manual").replace(/_/g, " ");
+  const addedByDisplay = item.added_by || "system";
+  const updatedDisplay = item.updated_at ? new Date(item.updated_at).toISOString().slice(0,10) : null;
 
   return (
     <div style={{
@@ -289,18 +169,13 @@ const MemoryCard = ({ item, categoryConfig, onEdit }) => {
       overflow: "hidden",
       borderLeft: `4px solid ${categoryConfig.color}`,
     }}>
-      {/* Card Header */}
-      <div style={{
-        padding: "12px 14px",
-        display: "flex", alignItems: "flex-start",
-        justifyContent: "space-between", gap: 8,
-      }}>
-        <div style={{ flex: 1 }}>
+      <div style={{ padding: "12px 14px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: T.slate800, marginBottom: 2 }}>
-            {item.title}
+            {item.title || "(untitled)"}
           </div>
           <div style={{ fontSize: 10, color: T.slate400 }}>
-            Added by {item.added_by} · {item.source.replace(/_/g," ")}
+            Added by {addedByDisplay} \u00b7 {sourceDisplay}{updatedDisplay ? ` \u00b7 updated ${updatedDisplay}` : ""}
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
@@ -317,14 +192,8 @@ const MemoryCard = ({ item, categoryConfig, onEdit }) => {
         </div>
       </div>
 
-      {/* Content */}
-      <div style={{
-        padding: "0 14px 12px",
-        fontSize: 12, color: T.slate700,
-        lineHeight: 1.7,
-        whiteSpace: "pre-line",
-      }}>
-        {expanded ? item.content : preview}
+      <div style={{ padding: "0 14px 12px", fontSize: 12, color: T.slate700, lineHeight: 1.7, whiteSpace: "pre-line", wordBreak: "break-word" }}>
+        {expanded ? content : preview}
         {hasMore && (
           <button
             onClick={() => setExpanded(e => !e)}
@@ -335,7 +204,7 @@ const MemoryCard = ({ item, categoryConfig, onEdit }) => {
               cursor: "pointer", padding: 0, fontWeight: 500,
             }}
           >
-            {expanded ? "Show less ↑" : `Show more (${lines.length - 3} more lines) ↓`}
+            {expanded ? "Show less \u2191" : `Show more (${lines.length - 3} more lines) \u2193`}
           </button>
         )}
       </div>
@@ -344,104 +213,54 @@ const MemoryCard = ({ item, categoryConfig, onEdit }) => {
 };
 
 // ─── Edit Modal ───────────────────────────────────────────────
-const EditModal = ({ item, categories, onSave, onCancel, onDelete }) => {
-  const [title,    setTitle]    = useState(item?.title   || "");
-  const [content,  setContent]  = useState(item?.content || "");
+const EditModal = ({ item, categories, onSave, onCancel, onDelete, saving }) => {
+  const [title, setTitle] = useState(item?.title || "");
+  const [content, setContent] = useState(item?.content || "");
   const [category, setCategory] = useState(item?.category || "business_rules");
   const isNew = !item?.id;
 
   return (
-    <div style={{
-      position: "fixed", inset: 0,
-      background: "rgba(15,23,42,0.5)",
-      display: "flex", alignItems: "center",
-      justifyContent: "center", zIndex: 1000,
-      padding: 20,
-    }}>
-      <div style={{
-        background: T.white, borderRadius: 16,
-        width: "100%", maxWidth: 560,
-        boxShadow: "0 20px 60px rgba(0,0,0,0.2)",
-        overflow: "hidden",
-      }}>
-        {/* Modal Header */}
-        <div style={{
-          padding: "16px 20px",
-          borderBottom: `1px solid ${T.slate200}`,
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-        }}>
+    <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
+      <div style={{ background: T.white, borderRadius: 16, width: "100%", maxWidth: 640, boxShadow: "0 20px 60px rgba(0,0,0,0.2)", overflow: "hidden", maxHeight: "90vh", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "16px 20px", borderBottom: `1px solid ${T.slate200}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>
             {isNew ? "Add Memory" : "Edit Memory"}
           </div>
-          <button onClick={onCancel} style={{
-            background: "none", border: "none",
-            fontSize: 18, color: T.slate400,
-            cursor: "pointer", lineHeight: 1,
-          }}>×</button>
+          <button onClick={onCancel} style={{ background: "none", border: "none", fontSize: 18, color: T.slate400, cursor: "pointer", lineHeight: 1 }}>\u00d7</button>
         </div>
 
-        {/* Modal Body */}
-        <div style={{ padding: "20px" }}>
-          {/* Category */}
+        <div style={{ padding: "20px", overflow: "auto" }}>
           <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: T.slate600, display: "block", marginBottom: 6 }}>
-              CATEGORY
-            </label>
+            <label style={{ fontSize: 11, fontWeight: 600, color: T.slate600, display: "block", marginBottom: 6 }}>CATEGORY</label>
             <select
               value={category}
               onChange={e => setCategory(e.target.value)}
-              style={{
-                width: "100%", padding: "8px 10px",
-                fontSize: 12, color: T.slate800,
-                background: T.white,
-                border: `1px solid ${T.slate200}`,
-                borderRadius: 8, outline: "none",
-              }}
+              style={{ width: "100%", padding: "8px 10px", fontSize: 12, color: T.slate800, background: T.white, border: `1px solid ${T.slate200}`, borderRadius: 8, outline: "none" }}
             >
-              {categories.map(c => (
+              {(categories || []).map(c => (
                 <option key={c.id} value={c.id}>{c.icon} {c.label}</option>
               ))}
             </select>
           </div>
 
-          {/* Title */}
           <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: T.slate600, display: "block", marginBottom: 6 }}>
-              TITLE
-            </label>
+            <label style={{ fontSize: 11, fontWeight: 600, color: T.slate600, display: "block", marginBottom: 6 }}>TITLE</label>
             <input
               value={title}
               onChange={e => setTitle(e.target.value)}
               placeholder="Short descriptive title..."
-              style={{
-                width: "100%", padding: "8px 10px",
-                fontSize: 12, color: T.slate800,
-                border: `1px solid ${T.slate200}`,
-                borderRadius: 8, outline: "none",
-                boxSizing: "border-box",
-              }}
+              style={{ width: "100%", padding: "8px 10px", fontSize: 12, color: T.slate800, border: `1px solid ${T.slate200}`, borderRadius: 8, outline: "none", boxSizing: "border-box" }}
             />
           </div>
 
-          {/* Content */}
           <div style={{ marginBottom: 6 }}>
-            <label style={{ fontSize: 11, fontWeight: 600, color: T.slate600, display: "block", marginBottom: 6 }}>
-              CONTENT
-            </label>
+            <label style={{ fontSize: 11, fontWeight: 600, color: T.slate600, display: "block", marginBottom: 6 }}>CONTENT</label>
             <textarea
               value={content}
               onChange={e => setContent(e.target.value)}
               placeholder="Enter the information Claude should remember..."
-              rows={8}
-              style={{
-                width: "100%", padding: "10px",
-                fontSize: 12, color: T.slate800,
-                border: `1px solid ${T.slate200}`,
-                borderRadius: 8, outline: "none",
-                resize: "vertical", lineHeight: 1.6,
-                fontFamily: "inherit",
-                boxSizing: "border-box",
-              }}
+              rows={10}
+              style={{ width: "100%", padding: "10px", fontSize: 12, color: T.slate800, border: `1px solid ${T.slate200}`, borderRadius: 8, outline: "none", resize: "vertical", lineHeight: 1.6, fontFamily: "inherit", boxSizing: "border-box" }}
             />
           </div>
           <div style={{ fontSize: 10, color: T.slate400, marginBottom: 16 }}>
@@ -449,43 +268,27 @@ const EditModal = ({ item, categories, onSave, onCancel, onDelete }) => {
           </div>
         </div>
 
-        {/* Modal Footer */}
-        <div style={{
-          padding: "12px 20px",
-          borderTop: `1px solid ${T.slate200}`,
-          display: "flex", justifyContent: "space-between", alignItems: "center",
-        }}>
+        <div style={{ padding: "12px 20px", borderTop: `1px solid ${T.slate200}`, display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
           <div>
             {!isNew && (
               <button
                 onClick={() => onDelete(item.id)}
-                style={{
-                  padding: "7px 14px", fontSize: 11, fontWeight: 600,
-                  color: T.red, background: T.redLt,
-                  border: "none", borderRadius: 7, cursor: "pointer",
-                }}
+                disabled={saving}
+                style={{ padding: "7px 14px", fontSize: 11, fontWeight: 600, color: T.red, background: T.redLt, border: "none", borderRadius: 7, cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.5 : 1 }}
               >Delete</button>
             )}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
             <button
               onClick={onCancel}
-              style={{
-                padding: "7px 14px", fontSize: 11, fontWeight: 600,
-                color: T.slate600, background: T.slate100,
-                border: "none", borderRadius: 7, cursor: "pointer",
-              }}
+              disabled={saving}
+              style={{ padding: "7px 14px", fontSize: 11, fontWeight: 600, color: T.slate600, background: T.slate100, border: "none", borderRadius: 7, cursor: saving ? "not-allowed" : "pointer" }}
             >Cancel</button>
             <button
               onClick={() => onSave({ ...item, title, content, category })}
-              disabled={!title.trim() || !content.trim()}
-              style={{
-                padding: "7px 16px", fontSize: 11, fontWeight: 600,
-                color: T.white, background: T.navy,
-                border: "none", borderRadius: 7, cursor: "pointer",
-                opacity: (!title.trim() || !content.trim()) ? 0.5 : 1,
-              }}
-            >Save Memory</button>
+              disabled={!title.trim() || !content.trim() || saving}
+              style={{ padding: "7px 16px", fontSize: 11, fontWeight: 600, color: T.white, background: T.navy, border: "none", borderRadius: 7, cursor: "pointer", opacity: (!title.trim() || !content.trim() || saving) ? 0.5 : 1 }}
+            >{saving ? "Saving\u2026" : "Save Memory"}</button>
           </div>
         </div>
       </div>
@@ -495,10 +298,7 @@ const EditModal = ({ item, categories, onSave, onCancel, onDelete }) => {
 
 // ─── Category Sidebar ─────────────────────────────────────────
 const CategorySidebar = ({ categories, activeCategory, counts, onChange }) => (
-  <div style={{
-    width: 200, flexShrink: 0,
-    display: "flex", flexDirection: "column", gap: 4,
-  }}>
+  <div style={{ width: 220, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4 }}>
     <button
       onClick={() => onChange("all")}
       style={{
@@ -512,16 +312,13 @@ const CategorySidebar = ({ categories, activeCategory, counts, onChange }) => (
       }}
     >
       <span>All Memories</span>
-      <span style={{
-        fontSize: 10, fontWeight: 700,
-        background: activeCategory === "all" ? "rgba(255,255,255,0.2)" : T.slate200,
-        color: activeCategory === "all" ? T.white : T.slate600,
-        borderRadius: 10, padding: "1px 7px",
-      }}>{counts.all}</span>
+      <span style={{ fontSize: 10, fontWeight: 700, background: activeCategory === "all" ? "rgba(255,255,255,0.2)" : T.slate200, color: activeCategory === "all" ? T.white : T.slate600, borderRadius: 10, padding: "1px 7px" }}>{counts.all}</span>
     </button>
 
-    {categories.map(cat => {
+    {(categories || []).map(cat => {
       const active = activeCategory === cat.id;
+      const cnt = counts[cat.id] || 0;
+      if (!cnt) return null;
       return (
         <button
           key={cat.id}
@@ -536,16 +333,11 @@ const CategorySidebar = ({ categories, activeCategory, counts, onChange }) => (
             textAlign: "left",
           }}
         >
-          <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
             <span style={{ fontSize: 14 }}>{cat.icon}</span>
-            <span>{cat.label}</span>
+            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{cat.label}</span>
           </span>
-          <span style={{
-            fontSize: 10, fontWeight: 600,
-            background: active ? cat.color : T.slate100,
-            color: active ? T.white : T.slate500,
-            borderRadius: 10, padding: "1px 7px",
-          }}>{counts[cat.id] || 0}</span>
+          <span style={{ fontSize: 10, fontWeight: 600, background: active ? cat.color : T.slate100, color: active ? T.white : T.slate500, borderRadius: 10, padding: "1px 7px", flexShrink: 0 }}>{cnt}</span>
         </button>
       );
     })}
@@ -554,106 +346,164 @@ const CategorySidebar = ({ categories, activeCategory, counts, onChange }) => (
 
 // ─── Main Module ──────────────────────────────────────────────
 export default function PersistentMemory() {
-  const [memories,        setMemories]        = useState(MOCK_MEMORY);
-  const [activeCategory,  setActiveCategory]  = useState("all");
-  const [editingItem,     setEditingItem]      = useState(null);
-  const [showNewModal,    setShowNewModal]     = useState(false);
-  const [searchQuery,     setSearchQuery]      = useState("");
+  const [memories,       setMemories]       = useState([]);
+  const [loading,        setLoading]        = useState(true);
+  const [errorMsg,       setErrorMsg]       = useState(null);
+  const [saving,         setSaving]         = useState(false);
+  const [activeCategory, setActiveCategory] = useState("all");
+  const [editingItem,    setEditingItem]    = useState(null);
+  const [showNewModal,   setShowNewModal]   = useState(false);
+  const [searchQuery,    setSearchQuery]    = useState("");
+  // collapsed audit-trail sections open/close (only relevant in "all" view)
+  const [expandedAudit,  setExpandedAudit]  = useState({});
 
-  // Counts per category
+  // ── Load ──
+  const loadMemories = async () => {
+    setLoading(true); setErrorMsg(null);
+    try {
+      const { data, error } = await supabase
+        .from("persistent_memory")
+        .select("id, agency_id, category, title, content, is_active, added_by, source, created_at, updated_at")
+        .eq("agency_id", AGENCY_ID)
+        .neq("is_active", false)
+        .order("category", { ascending: true })
+        .order("updated_at", { ascending: false });
+      if (error) throw error;
+      setMemories(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setErrorMsg(e?.message || "Failed to load memories.");
+      setMemories([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadMemories(); }, []);
+
+  // ── Derived ──
+  const activeMemories = (memories || []).filter(m => m?.is_active !== false);
+
   const counts = {
-    all: memories.filter(m => m.is_active !== false).length,
+    all: activeMemories.length,
     ...Object.fromEntries(
-      CATEGORIES.map(c => [c.id, memories.filter(m => m.category === c.id && m.is_active !== false).length])
+      CATEGORIES.map(c => [c.id, activeMemories.filter(m => m.category === c.id).length])
     ),
   };
 
-  // Filtered memories
-  const filtered = memories.filter(m => {
-    if (m.is_active === false) return false;
+  const filtered = activeMemories.filter(m => {
     if (activeCategory !== "all" && m.category !== activeCategory) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      return m.title.toLowerCase().includes(q) || m.content.toLowerCase().includes(q);
+      const t = (m.title || "").toLowerCase();
+      const c = (m.content || "").toLowerCase();
+      return t.includes(q) || c.includes(q);
     }
     return true;
   });
 
-  // Grouped by category for display
-  const grouped = CATEGORIES.reduce((acc, cat) => {
-    const items = filtered.filter(m => m.category === cat.id);
-    if (items.length) acc[cat.id] = items;
-    return acc;
-  }, {});
-
-  const handleSave = (item) => {
-    if (item.id) {
-      setMemories(prev => prev.map(m => m.id === item.id ? item : m));
-    } else {
-      setMemories(prev => [...prev, { ...item, id: Date.now().toString(), added_by: "owner", source: "manual" }]);
+  // ── Save / Delete ──
+  const handleSave = async (item) => {
+    setSaving(true); setErrorMsg(null);
+    try {
+      if (item.id) {
+        const { error } = await supabase
+          .from("persistent_memory")
+          .update({
+            title: item.title,
+            content: item.content,
+            category: item.category,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", item.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("persistent_memory")
+          .insert({
+            agency_id: AGENCY_ID,
+            category: item.category,
+            title: item.title,
+            content: item.content,
+            added_by: "owner_manual",
+            source: "web_app_edit",
+            is_active: true,
+          });
+        if (error) throw error;
+      }
+      setEditingItem(null);
+      setShowNewModal(false);
+      await loadMemories();
+    } catch (e) {
+      setErrorMsg(e?.message || "Save failed.");
+    } finally {
+      setSaving(false);
     }
-    setEditingItem(null);
-    setShowNewModal(false);
   };
 
-  const handleDelete = (id) => {
-    setMemories(prev => prev.map(m => m.id === id ? { ...m, is_active: false } : m));
-    setEditingItem(null);
+  const handleDelete = async (id) => {
+    if (!id) return;
+    setSaving(true); setErrorMsg(null);
+    try {
+      const { error } = await supabase
+        .from("persistent_memory")
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq("id", id);
+      if (error) throw error;
+      setEditingItem(null);
+      await loadMemories();
+    } catch (e) {
+      setErrorMsg(e?.message || "Delete failed.");
+    } finally {
+      setSaving(false);
+    }
   };
 
-  const allContext = memories
-    .filter(m => m.is_active !== false)
-    .map(m => `[${m.title}]\n${m.content}`)
+  // ── Context for Ask Claude (all-memory) ──
+  const allContext = activeMemories
+    .map(m => `[${m.category} \u00b7 ${m.title}]\n${m.content}`)
     .join("\n\n---\n\n");
 
+  // ── Render ──
   return (
     <div>
-      {/* Module Header */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 700, color: T.slate900, letterSpacing: "-0.02em" }}>
             Persistent Memory
           </div>
           <div style={{ fontSize: 12, color: T.slate500, marginTop: 3 }}>
-            {counts.all} memory entries · Claude reads all of these in every conversation
+            {loading ? "Loading\u2026" : `${counts.all} memory ${counts.all === 1 ? "entry" : "entries"} \u00b7 Claude reads all of these in every conversation`}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <AskBtn
-            context={`Here is my complete agency memory context — everything I want you to know about my business:\n\n${allContext}\n\nPlease review this and tell me: (1) Is anything missing? (2) Is anything outdated? (3) Are there any inconsistencies you notice?`}
+            context={`Here is my complete agency memory context \u2014 everything I want you to know about my business:\n\n${allContext}\n\nPlease review this and tell me: (1) Is anything missing? (2) Is anything outdated? (3) Are there any inconsistencies you notice?`}
           />
           <button
             onClick={() => setShowNewModal(true)}
-            style={{
-              display: "flex", alignItems: "center", gap: 6,
-              background: T.navy, color: T.white,
-              border: "none", borderRadius: 8,
-              padding: "8px 16px", fontSize: 12, fontWeight: 600,
-              cursor: "pointer",
-            }}
+            style={{ display: "flex", alignItems: "center", gap: 6, background: T.navy, color: T.white, border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
           >+ Add Memory</button>
         </div>
       </div>
 
-      {/* How Claude Uses This — Info Banner */}
-      <div style={{
-        background: T.blueLt,
-        border: `1px solid ${T.blue}20`,
-        borderLeft: `4px solid ${T.blue}`,
-        borderRadius: 10, padding: "12px 16px",
-        marginBottom: 20,
-        display: "flex", alignItems: "flex-start", gap: 12,
-      }}>
-        <span style={{ fontSize: 20, flexShrink: 0 }}>💡</span>
+      {/* Info Banner */}
+      <div style={{ background: T.blueLt, border: `1px solid ${T.blue}20`, borderLeft: `4px solid ${T.blue}`, borderRadius: 10, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "flex-start", gap: 12 }}>
+        <span style={{ fontSize: 20, flexShrink: 0 }}>\ud83d\udca1</span>
         <div>
           <div style={{ fontSize: 12, fontWeight: 600, color: T.navy, marginBottom: 3 }}>
             How Claude uses this memory
           </div>
           <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.6 }}>
-            Every entry here is passed to Claude as context at the start of each conversation. Claude uses it to give you answers that are specific to your agency — not generic advice. The more complete and accurate this memory is, the more useful your Claude becomes. You and Claude can both add, edit, and update these entries at any time.
+            Every entry here is passed to Claude as context at the start of each conversation. Claude uses it to give you answers that are specific to your agency \u2014 not generic advice. The more complete and accurate this memory is, the more useful your Claude becomes. You and Claude can both add, edit, and update these entries at any time.
           </div>
         </div>
       </div>
+
+      {errorMsg && (
+        <div style={{ background: T.redLt, border: `1px solid ${T.red}40`, borderLeft: `4px solid ${T.red}`, borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 12, color: "#991B1B" }}>
+          {errorMsg}
+        </div>
+      )}
 
       {/* Search */}
       <div style={{ marginBottom: 16 }}>
@@ -661,21 +511,12 @@ export default function PersistentMemory() {
           value={searchQuery}
           onChange={e => setSearchQuery(e.target.value)}
           placeholder="Search memories..."
-          style={{
-            width: "100%", padding: "9px 14px",
-            fontSize: 12, color: T.slate800,
-            border: `1px solid ${T.slate200}`,
-            borderRadius: 9, outline: "none",
-            boxSizing: "border-box",
-            background: T.white,
-          }}
+          style={{ width: "100%", padding: "9px 14px", fontSize: 12, color: T.slate800, border: `1px solid ${T.slate200}`, borderRadius: 9, outline: "none", boxSizing: "border-box", background: T.white }}
         />
       </div>
 
-      {/* Body — Sidebar + Cards */}
+      {/* Body */}
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-
-        {/* Category Sidebar */}
         <CategorySidebar
           categories={CATEGORIES}
           activeCategory={activeCategory}
@@ -683,51 +524,56 @@ export default function PersistentMemory() {
           onChange={setActiveCategory}
         />
 
-        {/* Memory Cards */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 20 }}>
-          {filtered.length === 0 && (
-            <div style={{
-              textAlign: "center", padding: "40px 20px",
-              color: T.slate400, fontSize: 13,
-            }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 20, minWidth: 0 }}>
+          {loading && (
+            <div style={{ textAlign: "center", padding: "40px 20px", color: T.slate400, fontSize: 13 }}>
+              Loading memories\u2026
+            </div>
+          )}
+
+          {!loading && filtered.length === 0 && (
+            <div style={{ textAlign: "center", padding: "40px 20px", color: T.slate400, fontSize: 13 }}>
               {searchQuery ? `No memories match "${searchQuery}"` : "No memories in this category yet."}
             </div>
           )}
 
-          {activeCategory === "all"
-            ? CATEGORIES.map(cat => {
-                const items = grouped[cat.id];
-                if (!items?.length) return null;
-                return (
-                  <div key={cat.id}>
-                    {/* Category Group Header */}
-                    <div style={{
-                      display: "flex", alignItems: "center", gap: 8,
-                      marginBottom: 10,
+          {!loading && activeCategory === "all" && filtered.length > 0 && CATEGORIES.map(cat => {
+            const items = filtered.filter(m => m.category === cat.id);
+            if (!items.length) return null;
+            const isAudit = !!cat.collapsed;
+            // If user is actively searching, force audit sections open so results show.
+            const isOpen = isAudit
+              ? (searchQuery ? true : !!expandedAudit[cat.id])
+              : true;
+            return (
+              <div key={cat.id}>
+                <div
+                  onClick={isAudit ? () => setExpandedAudit(s => ({ ...s, [cat.id]: !s[cat.id] })) : undefined}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8, marginBottom: 10,
+                    cursor: isAudit ? "pointer" : "default",
+                    userSelect: "none",
+                  }}
+                >
+                  <span style={{ fontSize: 16 }}>{cat.icon}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: T.slate700 }}>{cat.label}</span>
+                  <div style={{ flex: 1, height: 1, background: T.slate200, marginLeft: 4 }} />
+                  <span style={{ fontSize: 11, color: T.slate400 }}>
+                    {items.length} {items.length === 1 ? "entry" : "entries"}
+                  </span>
+                  {isAudit && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 600, color: T.slate500,
+                      background: T.slate100, border: `1px solid ${T.slate200}`,
+                      borderRadius: 6, padding: "2px 8px",
                     }}>
-                      <span style={{ fontSize: 16 }}>{cat.icon}</span>
-                      <span style={{ fontSize: 13, fontWeight: 700, color: T.slate700 }}>{cat.label}</span>
-                      <div style={{ flex: 1, height: 1, background: T.slate200, marginLeft: 4 }} />
-                      <span style={{ fontSize: 11, color: T.slate400 }}>{items.length} {items.length === 1 ? "entry" : "entries"}</span>
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {items.map(item => (
-                        <MemoryCard
-                          key={item.id}
-                          item={item}
-                          categoryConfig={cat}
-                          onEdit={setEditingItem}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                );
-              })
-            : (() => {
-                const cat = CATEGORIES.find(c => c.id === activeCategory);
-                return (
+                      {isOpen ? "Hide \u2191" : "Show \u2193"}
+                    </span>
+                  )}
+                </div>
+                {isOpen && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {filtered.map(item => (
+                    {items.map(item => (
                       <MemoryCard
                         key={item.id}
                         item={item}
@@ -736,9 +582,31 @@ export default function PersistentMemory() {
                       />
                     ))}
                   </div>
-                );
-              })()
-          }
+                )}
+                {isAudit && !isOpen && (
+                  <div style={{ fontSize: 11, color: T.slate400, fontStyle: "italic", paddingLeft: 24 }}>
+                    {cat.description} \u2014 click header to expand.
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {!loading && activeCategory !== "all" && filtered.length > 0 && (() => {
+            const cat = CATEGORY_BY_ID[activeCategory] || UNKNOWN_CATEGORY;
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {filtered.map(item => (
+                  <MemoryCard
+                    key={item.id}
+                    item={item}
+                    categoryConfig={cat}
+                    onEdit={setEditingItem}
+                  />
+                ))}
+              </div>
+            );
+          })()}
         </div>
       </div>
 
@@ -747,8 +615,9 @@ export default function PersistentMemory() {
         <EditModal
           item={editingItem}
           categories={CATEGORIES}
+          saving={saving}
           onSave={handleSave}
-          onCancel={() => { setEditingItem(null); setShowNewModal(false); }}
+          onCancel={() => { if (!saving) { setEditingItem(null); setShowNewModal(false); } }}
           onDelete={handleDelete}
         />
       )}
