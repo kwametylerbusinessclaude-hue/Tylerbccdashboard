@@ -122,14 +122,14 @@ If the agent has historical data they want loaded before the recipes start runni
 - `compliance_log` (joined to `compliance_rules` for context) — History tab
 - `compliance_calendar` (filtered by month) — Calendar tab
 
-**If everything is empty:** Should never happen — migration 002 seeds 57 rules into `compliance_rules`. If this module is empty, migration 002 didn't run. Re-run it.
+**If everything is empty:** Should never happen — migration 002 seeds 76 rules into `compliance_rules`. If this module is empty, migration 002 didn't run. Re-run it.
 
 **If something's wrong:**
 - Rules tab shows duplicates → migration 002 was run twice without conflict handling. DELETE duplicates by `(rule_code, agency_id)` keeping one of each.
 - History tab is empty but agent has been doing reviews → `compliance_log` writes happen via the Project Claude's compliance check workflow. If agent has been doing them outside the system, those don't show up. Going forward, the agent's Claude inserts to `compliance_log` after each rule check.
 
 **To populate from scratch:**
-- `compliance_rules`: migration 002 (run once, has 57 SF rules baseline)
+- `compliance_rules`: migration 002 (run once, has 76 SF rules baseline)
 - `compliance_log`: written by the agent's Claude during compliance check conversations
 - `compliance_calendar`: should be seeded with annual deadlines per migration 002 OR manually populated with state-specific dates
 
@@ -309,4 +309,4 @@ Path A installs run this in Step 2 of the handoff prompt. Path B installs should
 
 ---
 
-*Last updated: 2026-06-17 — column-name corrections (agency.name, alerts.is_resolved/resolved_at, journal_lines.journal_entry_id, producer_production.staff_id) + Agent role added to HRPeople producer regex. Initial doc 2026-05-10.*
+*Last updated: 2026-06-18 — refreshed compliance_rules count to 76 (matches migration 002 + system-prompt baseline). 2026-06-17 — column-name corrections (agency.name, alerts.is_resolved/resolved_at, journal_lines.journal_entry_id, producer_production.staff_id) + Agent role added to HRPeople producer regex. Initial doc 2026-05-10.*
