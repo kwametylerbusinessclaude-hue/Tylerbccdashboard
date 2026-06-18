@@ -70,11 +70,10 @@ function useFinancialsData() {
             .select("account_name, account_type, amount, month, year")
             .eq("year", currentYear).order("month"),
 
-          // Income statement view — prior year YTD through current month (fair YoY %)
+          // Income statement view — prior year (we slice to YTD-through-current-data-month client-side for fair YoY)
           supabase.from("v_income_statement")
             .select("account_type, amount, month")
-            .eq("year", currentYear - 1)
-            .lte("month", currentMonth),
+            .eq("year", currentYear - 1),
 
           // SF comp recap — real schema columns
           supabase.from("comp_recap")
@@ -229,9 +228,13 @@ function useFinancialsData() {
           dueDay:  c.payment_due_day,
         }));
 
-        // Prior-year YTD income from v_income_statement (drives YoY% on Overview)
+        // Prior-year YTD income for fair YoY%: filter prior year to the same months
+        // that have actual data in the current year (avoids 5-month vs 6-month skew
+        // when the current calendar month has not yet been ingested).
+        const currentYearMonths = isData.filter(r => parseFloat(r.amount || 0) !== 0).map(r => r.month);
+        const latestDataMonth = currentYearMonths.length > 0 ? Math.max(...currentYearMonths) : currentMonth;
         const priorYearYTD = (isPriorRows.data || [])
-          .filter(r => r.account_type === "income")
+          .filter(r => r.account_type === "income" && r.month <= latestDataMonth)
           .reduce((s,r) => s + parseFloat(r.amount || 0), 0);
 
         // Period labels — dynamic, replace stale hardcoded "Apr 2026" / "Q1 2026" headers
