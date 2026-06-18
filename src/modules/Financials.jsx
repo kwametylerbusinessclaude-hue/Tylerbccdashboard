@@ -101,10 +101,10 @@ function useFinancialsData() {
             `)
             .order("created_at", { ascending: false }).limit(50),
 
-          // Payroll runs (header)
+          // Payroll runs (header) — pull plenty so YTD totals + history table both populate
           supabase.from("payroll_runs")
-            .select("id, pay_period_start, pay_period_end, pay_date, payroll_provider, gross_payroll, employer_taxes, net_payroll, status")
-            .order("pay_date", { ascending: false }).limit(12),
+            .select("id, pay_period_start, pay_period_end, pay_date, payroll_provider, gross_payroll, employer_taxes, net_payroll, status, is_synthesized")
+            .order("pay_date", { ascending: false }).limit(50),
 
           // Payroll detail (per-employee)
           supabase.from("payroll_detail")
@@ -207,13 +207,15 @@ function useFinancialsData() {
           const endStr   = new Date(run.pay_period_end).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" });
           const dateStr  = run.pay_date ? new Date(run.pay_date).toLocaleDateString("en-US", { month:"short", day:"numeric", year:"numeric" }) : "";
           return {
-            pay_period: `${startStr} – ${endStr}`,
-            pay_date:   dateStr,
-            gross:      parseFloat(run.gross_payroll || 0),
-            taxes:      parseFloat(run.employer_taxes || 0),
-            net:        parseFloat(run.net_payroll || 0),
-            status:     run.status || "paid",
-            provider:   run.payroll_provider,
+            pay_period:     `${startStr} – ${endStr}`,
+            pay_date:       dateStr,
+            pay_date_iso:   run.pay_date,
+            gross:          parseFloat(run.gross_payroll || 0),
+            taxes:          parseFloat(run.employer_taxes || 0),
+            net:            parseFloat(run.net_payroll || 0),
+            status:         run.status || "paid",
+            provider:       run.payroll_provider,
+            is_synthesized: !!run.is_synthesized,
           };
         });
 
@@ -791,14 +793,18 @@ const AIPPSection = ({ data }) => {
 
 // ─── Section: Payroll ─────────────────────────────────────────
 const PayrollSection = ({ data }) => {
-  const ytdGross = (data.payroll || []).reduce((s,r) => s + parseFloat(r.gross || 0), 0);
-  const ytdTax   = (data.payroll || []).reduce((s,r) => s + parseFloat(r.taxes || 0), 0);
+  // YTD totals — filter to current calendar year only (don't aggregate the full history)
+  const currentYear = new Date().getFullYear();
+  const ytdRows = (data.payroll || []).filter(r => r.pay_date_iso && new Date(r.pay_date_iso).getFullYear() === currentYear);
+  const ytdGross = ytdRows.reduce((s,r) => s + parseFloat(r.gross || 0), 0);
+  const ytdTax   = ytdRows.reduce((s,r) => s + parseFloat(r.taxes || 0), 0);
+  const anySynth = (data.payroll || []).some(r => r.is_synthesized);
 
   return (
     <Card>
       <CardHeader
         title="Payroll History"
-        sub={`YTD Gross: ${fmt(ytdGross)} · YTD Taxes: ${fmt(ytdTax)}`}
+        sub={`YTD Gross: ${fmt(ytdGross)} · YTD Taxes: ${fmt(ytdTax)}${anySynth ? "  ·  ⓘ rows marked † are synthesized from bank transactions — actual Paychex statements pending" : ""}`}
         action={<AskBtn context={`My agency payroll YTD: Gross ${fmt(ytdGross)}, Employer taxes ${fmt(ytdTax)}. Help me review payroll expenses and identify any concerns.`} />}
       />
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -812,7 +818,10 @@ const PayrollSection = ({ data }) => {
         <tbody>
           {(data.payroll || []).map((r,i) => (
             <tr key={i} style={{ borderBottom: `1px solid ${T.slate100}` }}>
-              <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate800 }}>{r.pay_period||r.period}</td>
+              <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate800 }}>
+                {r.pay_period||r.period}
+                {r.is_synthesized && <span style={{ color: T.amber, marginLeft: 4, fontWeight: 600 }} title="Synthesized from bank transactions — actual Paychex statement pending">†</span>}
+              </td>
               <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate600 }}>{r.pay_date||r.payDate||"-"}</td>
               <td style={{ padding: "9px 8px", fontSize: 12, fontWeight: 600, color: T.slate900, textAlign: "right" }}>{fmt(r.gross)}</td>
               <td style={{ padding: "9px 8px", fontSize: 12, color: T.slate700, textAlign: "right" }}>{fmt(parseFloat(r.taxes||0))}</td>
