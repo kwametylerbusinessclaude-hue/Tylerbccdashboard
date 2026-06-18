@@ -312,9 +312,11 @@ const AlertsWidget = ({ data, onNavigate }) => {
 // ── Widget: Compliance Summary ────────────────────────────────
 const ComplianceWidget = ({ data, onNavigate }) => {
   const rules = data.complianceRules || [];
-  const violations = rules.filter(r => r.status === "violation" || r.is_active).length;
+  // v2: violations are ONLY rows with status='violation' — is_active means the rule is in
+  // force, not that it's been violated. All 76 SF compliance_rules are active by design.
+  const violations = rules.filter(r => r.status === "violation").length;
   const pending = rules.filter(r => r.status === "pending_review").length;
-  const compliant = rules.filter(r => r.status === "compliant").length;
+  const compliant = rules.filter(r => r.status === "compliant" || (r.is_active && !r.status)).length;
   const total = rules.length;
 
   return (
