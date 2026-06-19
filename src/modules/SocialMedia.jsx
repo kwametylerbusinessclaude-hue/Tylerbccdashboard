@@ -72,39 +72,109 @@ const PILLARS = {
   invite:    { label:"Invite",    color:T.teal,   bg:T.tealLt   },
 };
 
-// ─── Mock Data ────────────────────────────────────────────────
-const MOCK_POSTS = [
-  { id:"p1",  platform:"facebook",  date:"Apr 27", time:"9:00 AM",  status:"scheduled", pillar:"educate",   caption:"Monday motivation — your agency runs on relationships, not just policies. Here are 3 things every homeowner should review this spring... 🏠", requires_manual:false, engagement:null },
-  { id:"p2",  platform:"linkedin",  date:"Apr 27", time:"12:00 PM", status:"scheduled", pillar:"connect",   caption:"3 things State Farm agents overlook in their Q2 planning — and what I do differently to stay ahead of the numbers.", requires_manual:false, engagement:null },
-  { id:"p3",  platform:"instagram", date:"Apr 27", time:"11:00 AM", status:"scheduled", pillar:"connect",   caption:"Behind the scenes at the agency this Monday morning. Coffee, team huddle, and a full week ahead. ☕", requires_manual:true, engagement:null },
-  { id:"p4",  platform:"facebook",  date:"Apr 26", time:"9:00 AM",  status:"posted",    pillar:"community", caption:"Huge shoutout to the Sarasota Food Bank for their incredible work this month. Proud to support our community! 🙌", requires_manual:false, engagement:{ likes:42, comments:8, shares:6, reach:680 } },
-  { id:"p5",  platform:"linkedin",  date:"Apr 26", time:"12:00 PM", status:"posted",    pillar:"educate",   caption:"The biggest financial mistake I see new homeowners make — and it's easier to fix than you think.", requires_manual:false, engagement:{ likes:31, comments:4, shares:2, reach:410 } },
-  { id:"p6",  platform:"instagram", date:"Apr 26", time:"11:00 AM", status:"posted",    pillar:"community", caption:"Saturday morning walk through Lakewood Ranch. This community never gets old. 🌿", requires_manual:true, engagement:{ likes:89, comments:12, shares:0, reach:920 } },
-  { id:"p7",  platform:"facebook",  date:"Apr 25", time:"9:00 AM",  status:"posted",    pillar:"celebrate", caption:"Happy work anniversary to Marcus! 4 years of helping Sarasota families feel confident about their coverage. 🎉", requires_manual:false, engagement:{ likes:67, comments:22, shares:3, reach:1100 } },
-  { id:"p8",  platform:"facebook",  date:"Apr 24", time:"9:00 AM",  status:"posted",    pillar:"educate",   caption:"Spring storm season reminder — here are 4 things every Florida homeowner should check before June 1st.", requires_manual:false, engagement:{ likes:38, comments:5, shares:11, reach:820 } },
-  { id:"p9",  platform:"instagram", date:"Apr 25", time:"11:00 AM", status:"failed",    pillar:"celebrate", caption:"Team Friday! Celebrating Marcus's work anniversary at lunch today. 🎂", requires_manual:true, engagement:null },
-  { id:"p10", platform:"twitter",   date:"Apr 26", time:"9:00 AM",  status:"posted",    pillar:"educate",   caption:"Florida homeowners: your policy probably doesn't cover flooding. Worth a 5-minute conversation to find out for sure.", requires_manual:false, engagement:{ likes:18, comments:3, shares:7, reach:290 } },
-  { id:"p11", platform:"facebook",  date:"Apr 28", time:"9:00 AM",  status:"draft",     pillar:"community", caption:"Local Love Tuesday — this week we're spotlighting a favorite local business in the area...", requires_manual:false, engagement:null },
-  { id:"p12", platform:"linkedin",  date:"Apr 29", time:"12:00 PM", status:"draft",     pillar:"educate",   caption:"Thursday Thoughts: what the best-run independent insurance agencies have in common.", requires_manual:false, engagement:null },
-  { id:"p13", platform:"facebook",  date:"Apr 30", time:"9:00 AM",  status:"draft",     pillar:"invite",    caption:"End of April — if you haven't done a policy review this year, my door is always open. No pressure, just a conversation.", requires_manual:false, engagement:null },
-  { id:"p14", platform:"instagram", date:"Apr 28", time:"11:00 AM", status:"draft",     pillar:"educate",   caption:"Myth Monday: does a red car actually cost more to insure? Let's bust this one. 🚗❓", requires_manual:true, engagement:null },
-];
+// ─── Data Transforms ─────────────────────────────────────
+// Shape DB rows from content_calendar into the UI's expected post shape,
+// and aggregate analytics. Engagement metrics are stubbed at 0 until we
+// wire a structured engagement tracker (gated on task 95c76f8a FB/LI setup).
 
-const MOCK_ANALYTICS = {
-  this_week: { total_posts:8, total_reach:4220, total_likes:285, total_comments:54, total_shares:29 },
-  last_week: { total_posts:7, total_reach:3890, total_likes:241, total_comments:41, total_shares:21 },
-  by_platform: [
-    { platform:"facebook",  posts:4, reach:2600, likes:147, comments:35, shares:20, best_post:"Marcus anniversary" },
-    { platform:"instagram", posts:2, reach:1420, likes:101, comments:12, shares:0,  best_post:"Saturday walk" },
-    { platform:"linkedin",  posts:1, reach:410,  likes:31,  comments:4,  shares:2,  best_post:"Homeowner mistake" },
-    { platform:"twitter",   posts:1, reach:290,  likes:18,  comments:3,  shares:7,  best_post:"Flood coverage tip" },
-  ],
-  by_pillar: [
-    { pillar:"educate",   posts:4, avg_reach:712, avg_likes:28 },
-    { pillar:"community", posts:2, avg_reach:890, avg_likes:55 },
-    { pillar:"connect",   posts:1, avg_reach:410, avg_likes:31 },
-    { pillar:"celebrate", posts:1, avg_reach:1100,avg_likes:67 },
-  ],
+const formatDateLabel = (isoDate) => {
+  if (!isoDate) return "";
+  // isoDate may be "YYYY-MM-DD" (date) or a full ISO. Parse safely either way.
+  const d = new Date(isoDate + (isoDate.length === 10 ? "T00:00:00" : ""));
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+};
+
+const formatTimeLabel = (timeStr) => {
+  if (!timeStr) return "";
+  // timeStr is "HH:MM:SS" from a TIME column. Render as "H:MM AM/PM".
+  const m = /^(\d{2}):(\d{2})/.exec(timeStr);
+  if (!m) return timeStr;
+  let h = parseInt(m[1], 10);
+  const min = m[2];
+  const ampm = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${min} ${ampm}`;
+};
+
+const transformPost = (row) => ({
+  id: row.id,
+  platform: row.platform || "facebook",
+  date: formatDateLabel(row.scheduled_date),
+  date_iso: row.scheduled_date,
+  time: formatTimeLabel(row.scheduled_time),
+  status: row.status || "draft",
+  pillar: row.content_type || "educate",       // content_type IS our pillar in DB
+  caption: row.caption || "",
+  hashtags: Array.isArray(row.hashtags) ? row.hashtags : [],
+  requires_manual: row.requires_manual === true || row.platform === "instagram",
+  post_url: row.post_url || null,
+  failure_reason: row.failure_reason || null,
+  // No structured engagement yet — leave null so existing conditional UI hides it.
+  engagement: null,
+});
+
+const computeAnalytics = (posts) => {
+  const safe = Array.isArray(posts) ? posts : [];
+  // Define "this week" = last 7 days inclusive; "last week" = the 7 days before that.
+  const now = new Date();
+  const dayMs = 24 * 60 * 60 * 1000;
+  const thisWeekStart = new Date(now.getTime() - 6 * dayMs);
+  thisWeekStart.setHours(0, 0, 0, 0);
+  const lastWeekStart = new Date(thisWeekStart.getTime() - 7 * dayMs);
+  const lastWeekEnd = new Date(thisWeekStart.getTime() - 1);
+
+  const inRange = (iso, start, end) => {
+    if (!iso) return false;
+    const d = new Date(iso + (iso.length === 10 ? "T12:00:00" : ""));
+    return d >= start && d <= end;
+  };
+
+  const thisWeekPosts = safe.filter(p => p.status === "posted" && inRange(p.date_iso, thisWeekStart, now));
+  const lastWeekPosts = safe.filter(p => p.status === "posted" && inRange(p.date_iso, lastWeekStart, lastWeekEnd));
+
+  const sumEngagement = (rows) => ({
+    total_posts: rows.length,
+    total_reach: 0,
+    total_likes: 0,
+    total_comments: 0,
+    total_shares: 0,
+  });
+
+  // by_platform: all posts in this_week (any status) for activity view
+  const platforms = ["facebook","instagram","linkedin","twitter"];
+  const by_platform = platforms.map(platform => {
+    const rows = safe.filter(p => p.platform === platform && inRange(p.date_iso, thisWeekStart, now));
+    return {
+      platform,
+      posts: rows.length,
+      reach: 0,
+      likes: 0,
+      comments: 0,
+      shares: 0,
+      best_post: "—",
+    };
+  }).filter(p => p.posts > 0 || ["facebook","instagram","linkedin","twitter"].indexOf(p.platform) >= 0);
+
+  // by_pillar: aggregate by content_type across all posts in this_week
+  const pillarKeys = ["educate","community","connect","celebrate","invite"];
+  const by_pillar = pillarKeys.map(pillar => {
+    const rows = safe.filter(p => p.pillar === pillar && inRange(p.date_iso, thisWeekStart, now));
+    return {
+      pillar,
+      posts: rows.length,
+      avg_reach: 0,
+      avg_likes: 0,
+    };
+  }).filter(p => p.posts > 0);
+
+  return {
+    this_week: sumEngagement(thisWeekPosts),
+    last_week: sumEngagement(lastWeekPosts),
+    by_platform,
+    by_pillar,
+    has_engagement_data: false,  // flip to true once we wire structured engagement
+  };
 };
 
 // ─── Shared Components ────────────────────────────────────────
@@ -212,26 +282,37 @@ const StatBar = ({ value, max, color }) => (
 );
 
 // ─── Section: Overview ────────────────────────────────────────
-const SocialOverview = ({ posts, analytics }) => {
+const SocialOverview = ({ posts, analytics, loading, onApprove, onEdit, onScheduleNew }) => {
   // Dynamic today filter — formats current date as "Mon DD" to match post date format
   const todayLabel = new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const todayPosts = posts.filter(p => p.date === todayLabel);
-  const scheduledThisWeek = posts.filter(p => p.status === "scheduled" || p.status === "draft").length;
-  const failedRecent = posts.filter(p => p.status === "failed").length;
-  const manualNeeded = posts.filter(p => p.status === "scheduled" && p.requires_manual).length;
+  const safePosts = Array.isArray(posts) ? posts : [];
+  const todayPosts = safePosts.filter(p => p.date === todayLabel);
+  const scheduledThisWeek = safePosts.filter(p => p.status === "scheduled" || p.status === "draft").length;
+  const failedRecent = safePosts.filter(p => p.status === "failed").length;
+  const manualNeeded = safePosts.filter(p => p.status === "scheduled" && p.requires_manual).length;
 
-  const weekChange = {
-    reach: Math.round(((analytics.this_week.total_reach - analytics.last_week.total_reach) / analytics.last_week.total_reach) * 100),
-    likes: Math.round(((analytics.this_week.total_likes - analytics.last_week.total_likes) / analytics.last_week.total_likes) * 100),
+  const pctChange = (a, b) => {
+    const an = Number.isFinite(a) ? a : 0;
+    const bn = Number.isFinite(b) ? b : 0;
+    if (bn === 0) return an === 0 ? 0 : 100;
+    return Math.round(((an - bn) / bn) * 100);
   };
+  const weekChange = {
+    reach: pctChange(analytics?.this_week?.total_reach, analytics?.last_week?.total_reach),
+    likes: pctChange(analytics?.this_week?.total_likes, analytics?.last_week?.total_likes),
+  };
+
+  if (loading) {
+    return <div style={{ padding:"32px 0", textAlign:"center", color:T.slate400, fontSize:13 }}>Loading social data…</div>;
+  }
 
   return (
     <div>
       {/* KPI Row */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10, marginBottom:16 }}>
         {[
-          { label:"Posts This Week",    value:analytics.this_week.total_posts,  color:T.blue,  border:T.blue  },
-          { label:"Total Reach",        value:analytics.this_week.total_reach.toLocaleString(), color:T.green, border:T.green, sub:`↑${weekChange.reach}% vs last week` },
+          { label:"Posts This Week",    value:analytics?.this_week?.total_posts ?? 0,  color:T.blue,  border:T.blue  },
+          { label:"Total Reach",        value:(analytics?.this_week?.total_reach || 0).toLocaleString(), color:T.green, border:T.green, sub: analytics?.has_engagement_data ? `↑${weekChange.reach}% vs last week` : "No engagement data yet" },
           { label:"Drafts Scheduled",   value:scheduledThisWeek, color:T.amber, border:T.amber },
           { label:"Manual Posts Needed",value:manualNeeded,      color:manualNeeded>0?T.purple:T.green, border:manualNeeded>0?T.purple:T.green },
         ].map((k,i) => (
@@ -258,7 +339,7 @@ const SocialOverview = ({ posts, analytics }) => {
       {failedRecent > 0 && (
         <div style={{ background:T.redLt, border:`1px solid #FECACA`, borderLeft:`4px solid ${T.red}`, borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
           <div style={{ fontSize:12, fontWeight:700, color:"#991B1B", marginBottom:2 }}>⚠️ Failed post detected</div>
-          <div style={{ fontSize:11, color:"#991B1B" }}>1 Instagram post failed on Apr 25. Review the calendar and repost manually.</div>
+          <div style={{ fontSize:11, color:"#991B1B" }}>{`${failedRecent} ${failedRecent===1?"post":"posts"} failed${(() => { const f = posts.find(p => p.status === "failed"); return f && f.date ? ` (most recent: ${f.platform} on ${f.date})` : ""; })()}. Review the calendar and repost manually.`}</div>
         </div>
       )}
 
@@ -266,11 +347,11 @@ const SocialOverview = ({ posts, analytics }) => {
         {/* Today's Posts */}
         
       <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
-        <button onClick={()=>setShowScheduler(s=>!s)} style={{padding:"8px 16px",fontSize:12,fontWeight:600,background:"#1E3A5F",color:"#fff",border:"none",borderRadius:8,cursor:"pointer"}}>➕ Schedule New Post</button>
+        <button onClick={() => onScheduleNew && onScheduleNew()} style={{padding:"8px 16px",fontSize:12,fontWeight:600,background:"#1E3A5F",color:"#fff",border:"none",borderRadius:8,cursor:"pointer"}}>➕ Schedule New Post</button>
       </div>
 <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-            <span style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Today — Monday April 27</span>
+            <span style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>{`Today — ${new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}`}</span>
             <AskBtn size="small" context={`Today's social media posts:\n${todayPosts.map(p=>`${p.platform.toUpperCase()} at ${p.time}: "${p.caption}" — Status: ${p.status}${p.requires_manual?" (MANUAL POSTING REQUIRED)":""}`).join("\n")}\n\nHelp me review today's content for compliance and engagement quality. Check against the 80/20 rule and the pre-post checklist.`} />
           </div>
           {todayPosts.length === 0 ? (
@@ -285,11 +366,11 @@ const SocialOverview = ({ posts, analytics }) => {
               <div style={{ fontSize:11, color:T.slate700, lineHeight:1.5, marginBottom:6 }}>{post.caption}</div>
               <div style={{ display:"flex", gap:6 }}>
                 {post.status === "draft" && (
-                  <button onClick={()=>approvePost(post.id)} style={{padding:"3px 10px",fontSize:10,fontWeight:600,background:"#DCFCE7",color:"#16A34A",border:"none",borderRadius:5,cursor:"pointer"}}>
+                  <button onClick={() => onApprove && onApprove(post.id)} style={{padding:"3px 10px",fontSize:10,fontWeight:600,background:"#DCFCE7",color:"#16A34A",border:"none",borderRadius:5,cursor:"pointer"}}>
                     ✅ Approve
                   </button>
                 )}
-                <button onClick={()=>setEditingPost(post)} style={{padding:"3px 10px",fontSize:10,fontWeight:600,background:"#DBEAFE",color:"#2563EB",border:"none",borderRadius:5,cursor:"pointer"}}>
+                <button onClick={() => onEdit && onEdit(post)} style={{padding:"3px 10px",fontSize:10,fontWeight:600,background:"#DBEAFE",color:"#2563EB",border:"none",borderRadius:5,cursor:"pointer"}}>
                   ✏️ Edit
                 </button>
               </div>
@@ -300,17 +381,17 @@ const SocialOverview = ({ posts, analytics }) => {
         {/* Platform Breakdown */}
         <Card>
           <div style={{ fontSize:13, fontWeight:600, color:T.slate800, marginBottom:12 }}>This week by platform</div>
-          {analytics.by_platform.map((p,i) => (
+          {(analytics?.by_platform || []).map((p,i) => (
             <div key={i} style={{ marginBottom:12 }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:3 }}>
                 <PlatformBadge platform={p.platform} />
                 <div style={{ display:"flex", gap:12 }}>
                   <span style={{ fontSize:10, color:T.slate500 }}>{p.posts} posts</span>
-                  <span style={{ fontSize:10, color:T.slate500 }}>{p.reach.toLocaleString()} reach</span>
-                  <span style={{ fontSize:10, fontWeight:600, color:T.slate700 }}>{p.likes} ❤️</span>
+                  <span style={{ fontSize:10, color:T.slate500 }}>{(p.reach || 0).toLocaleString()} reach</span>
+                  <span style={{ fontSize:10, fontWeight:600, color:T.slate700 }}>{p.likes || 0} ❤️</span>
                 </div>
               </div>
-              <StatBar value={p.reach} max={analytics.this_week.total_reach} color={PLATFORMS[p.platform]?.color || T.blue} />
+              <StatBar value={p.reach || p.posts} max={Math.max(1, analytics?.this_week?.total_reach || 0, ...(analytics?.by_platform || []).map(x => x.posts || 0))} color={PLATFORMS[p.platform]?.color || T.blue} />
             </div>
           ))}
         </Card>
@@ -326,9 +407,10 @@ const SocialOverview = ({ posts, analytics }) => {
           <AskBtn size="small" context="Review my social media content mix for this month. Am I following the 80/20 rule correctly? 80% should be value-first (educate, community, connect, celebrate) and max 20% business-adjacent (invite). Never hard-sell." />
         </div>
         <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-          {analytics.by_pillar.map((p,i) => {
+          {(analytics?.by_pillar || []).map((p,i) => {
             const pl = PILLARS[p.pillar];
-            const pct = Math.round((p.posts / analytics.this_week.total_posts) * 100);
+            const totalForPct = (analytics?.by_pillar || []).reduce((s, x) => s + (x.posts || 0), 0);
+            const pct = totalForPct > 0 ? Math.round(((p.posts || 0) / totalForPct) * 100) : 0;
             return (
               <div key={i} style={{ flex:1, minWidth:100, background:pl?.bg||T.slate50, borderRadius:10, padding:"10px 12px", textAlign:"center" }}>
                 <div style={{ fontSize:10, fontWeight:600, color:pl?.color||T.slate500, marginBottom:4 }}>{pl?.label||p.pillar}</div>
@@ -344,12 +426,12 @@ const SocialOverview = ({ posts, analytics }) => {
 };
 
 // ─── Section: Content Calendar ────────────────────────────────
-const ContentCalendar = ({ posts }) => {
+const ContentCalendar = ({ posts, loading }) => {
   const [platformFilter, setPlatformFilter] = useState("all");
   const [statusFilter,   setStatusFilter]   = useState("all");
   const [expanded,       setExpanded]       = useState(null);
 
-  const filtered = useMemo(() => posts.filter(p => {
+  const filtered = useMemo(() => (Array.isArray(posts) ? posts : []).filter(p => {
     if (platformFilter !== "all" && p.platform !== platformFilter) return false;
     if (statusFilter   !== "all" && p.status   !== statusFilter)   return false;
     return true;
@@ -362,10 +444,29 @@ const ContentCalendar = ({ posts }) => {
     return acc;
   }, {});
 
-  const dates = Object.keys(grouped).sort((a,b) => {
-    const order = ["Apr 30","Apr 29","Apr 28","Apr 27","Apr 26","Apr 25","Apr 24"];
-    return order.indexOf(a) - order.indexOf(b);
+  // Sort date labels by the underlying scheduled_date (descending: newest first)
+  const dates = Object.keys(grouped).sort((a, b) => {
+    const ia = grouped[a]?.[0]?.date_iso || "";
+    const ib = grouped[b]?.[0]?.date_iso || "";
+    if (!ia && !ib) return 0;
+    if (!ia) return 1;
+    if (!ib) return -1;
+    return ib.localeCompare(ia);
   });
+
+  if (loading) {
+    return <div style={{ padding:"32px 0", textAlign:"center", color:T.slate400, fontSize:13 }}>Loading calendar…</div>;
+  }
+  if (!filtered.length) {
+    return (
+      <div>
+        <div style={{ padding:"32px 0", textAlign:"center", color:T.slate400, fontSize:13 }}>
+          No posts match the current filters.<br/>
+          <span style={{ fontSize:11 }}>Try "All Platforms" / "All Status" or create new content in the <strong>Create Content</strong> tab.</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -469,24 +570,32 @@ const ContentCalendar = ({ posts }) => {
 };
 
 // ─── Section: Analytics ───────────────────────────────────────
-const Analytics = ({ analytics }) => {
-  const maxReach = Math.max(...analytics.by_platform.map(p => p.reach));
+const Analytics = ({ analytics, loading }) => {
+  const safePlatform = (analytics?.by_platform) || [];
+  const safePillar = (analytics?.by_pillar) || [];
+  const maxReach = safePlatform.length ? Math.max(0, ...safePlatform.map(p => p.reach || 0)) : 0;
+  const topPillar = safePillar.slice().sort((a,b) => (b.posts || 0) - (a.posts || 0))[0];
+  const hasEngagement = analytics?.has_engagement_data === true;
+
+  if (loading) {
+    return <div style={{ padding:"32px 0", textAlign:"center", color:T.slate400, fontSize:13 }}>Loading analytics…</div>;
+  }
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
       {/* Weekly Summary */}
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(120px,1fr))", gap:10 }}>
         {[
-          { label:"Total Reach",    value:analytics.this_week.total_reach.toLocaleString(),    sub:`vs ${analytics.last_week.total_reach.toLocaleString()} last week`, up:true },
-          { label:"Total Likes",    value:analytics.this_week.total_likes,    sub:`vs ${analytics.last_week.total_likes} last week`, up:true },
-          { label:"Total Comments", value:analytics.this_week.total_comments, sub:`vs ${analytics.last_week.total_comments} last week`, up:true },
-          { label:"Total Shares",   value:analytics.this_week.total_shares,   sub:`vs ${analytics.last_week.total_shares} last week`, up:true },
-          { label:"Posts Published",value:analytics.this_week.total_posts,    sub:`vs ${analytics.last_week.total_posts} last week`, up:true },
+          { label:"Total Reach",    value:(analytics?.this_week?.total_reach || 0).toLocaleString(),    sub:hasEngagement ? `vs ${(analytics?.last_week?.total_reach || 0).toLocaleString()} last week` : "engagement data pending" },
+          { label:"Total Likes",    value:analytics?.this_week?.total_likes ?? 0,    sub:hasEngagement ? `vs ${analytics?.last_week?.total_likes ?? 0} last week` : "engagement data pending" },
+          { label:"Total Comments", value:analytics?.this_week?.total_comments ?? 0, sub:hasEngagement ? `vs ${analytics?.last_week?.total_comments ?? 0} last week` : "engagement data pending" },
+          { label:"Total Shares",   value:analytics?.this_week?.total_shares ?? 0,   sub:hasEngagement ? `vs ${analytics?.last_week?.total_shares ?? 0} last week` : "engagement data pending" },
+          { label:"Posts Published",value:analytics?.this_week?.total_posts ?? 0,    sub:`vs ${analytics?.last_week?.total_posts ?? 0} last week` },
         ].map((k,i) => (
           <div key={i} style={{ background:T.white, border:`1px solid ${T.slate200}`, borderRadius:12, padding:"14px 16px" }}>
             <div style={{ fontSize:11, color:T.slate500, fontWeight:500, marginBottom:6 }}>{k.label}</div>
             <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>{k.value}</div>
-            <div style={{ fontSize:10, color:T.green, marginTop:2 }}>↑ {k.sub}</div>
+            <div style={{ fontSize:10, color:hasEngagement?T.green:T.slate400, marginTop:2 }}>{hasEngagement?"↑ ":""}{k.sub}</div>
           </div>
         ))}
       </div>
@@ -495,7 +604,7 @@ const Analytics = ({ analytics }) => {
       <Card>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
           <div style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Performance by platform — this week</div>
-          <AskBtn size="small" context={`My social media analytics this week:\n${analytics.by_platform.map(p=>`${p.platform}: ${p.posts} posts, ${p.reach} reach, ${p.likes} likes, ${p.comments} comments, ${p.shares} shares. Best post: "${p.best_post}"`).join("\n")}\n\nAnalyze my platform performance. Which platform is performing best? What content is working? What should I focus on next week?`} />
+          <AskBtn size="small" context={`My social media activity this week:\n${safePlatform.map(p=>`${p.platform}: ${p.posts} posts${hasEngagement?`, ${p.reach} reach, ${p.likes} likes, ${p.comments} comments, ${p.shares} shares. Best post: "${p.best_post}"`:""}`).join("\n")}\n\n${hasEngagement?"Analyze my platform performance. Which platform is performing best? What content is working? What should I focus on next week?":"Engagement metrics not yet tracked. Help me think about which platforms I should be investing more in based on post volume and content mix."}`} />
         </div>
         <table style={{ width:"100%", borderCollapse:"collapse" }}>
           <thead>
@@ -506,7 +615,7 @@ const Analytics = ({ analytics }) => {
             </tr>
           </thead>
           <tbody>
-            {analytics.by_platform.map((p,i) => (
+            {safePlatform.map((p,i) => (
               <tr key={i} style={{ borderBottom:`1px solid ${T.slate100}` }}>
                 <td style={{ padding:"10px 8px" }}><PlatformBadge platform={p.platform} /></td>
                 <td style={{ padding:"10px 8px", fontSize:12, fontWeight:600, color:T.slate900, textAlign:"right" }}>{p.posts}</td>
@@ -524,7 +633,7 @@ const Analytics = ({ analytics }) => {
       {/* By Pillar */}
       <Card>
         <div style={{ fontSize:13, fontWeight:600, color:T.slate800, marginBottom:14 }}>Performance by content pillar</div>
-        {analytics.by_pillar.map((p,i) => {
+        {safePillar.map((p,i) => {
           const pl = PILLARS[p.pillar];
           return (
             <div key={i} style={{ marginBottom:14 }}>
@@ -532,17 +641,24 @@ const Analytics = ({ analytics }) => {
                 <PillarBadge pillar={p.pillar} />
                 <div style={{ display:"flex", gap:16 }}>
                   <span style={{ fontSize:11, color:T.slate500 }}>{p.posts} posts</span>
-                  <span style={{ fontSize:11, color:T.slate500 }}>avg reach {p.avg_reach.toLocaleString()}</span>
-                  <span style={{ fontSize:11, fontWeight:600, color:T.slate700 }}>avg {p.avg_likes} likes</span>
+                  {hasEngagement && <span style={{ fontSize:11, color:T.slate500 }}>avg reach {(p.avg_reach||0).toLocaleString()}</span>}
+                  {hasEngagement && <span style={{ fontSize:11, fontWeight:600, color:T.slate700 }}>avg {p.avg_likes||0} likes</span>}
                 </div>
               </div>
-              <StatBar value={p.avg_reach} max={1200} color={pl?.color||T.blue} />
+              <StatBar value={hasEngagement?(p.avg_reach||0):(p.posts||0)} max={hasEngagement?1200:Math.max(1, ...safePillar.map(x=>x.posts||0))} color={pl?.color||T.blue} />
             </div>
           );
         })}
-        <div style={{ marginTop:8, padding:"10px 12px", background:T.greenLt, borderRadius:8, fontSize:11, color:"#065F46" }}>
-          💡 Celebrate pillar (team spotlights, milestones) is your highest-performing content type this week with avg reach of 1,100. Consider featuring your team more frequently.
-        </div>
+        {safePillar.length > 0 && (
+          <div style={{ marginTop:8, padding:"10px 12px", background:T.greenLt, borderRadius:8, fontSize:11, color:"#065F46" }}>
+            💡 {topPillar ? `${PILLARS[topPillar.pillar]?.label || topPillar.pillar} is your highest-volume content pillar this week with ${topPillar.posts} ${topPillar.posts===1?"post":"posts"}.${hasEngagement && topPillar.avg_reach ? ` Avg reach: ${topPillar.avg_reach.toLocaleString()}.` : ""}` : "Mix up your content pillars this week for a balanced 80/20 split."}
+          </div>
+        )}
+        {safePillar.length === 0 && (
+          <div style={{ marginTop:8, padding:"10px 12px", background:T.slate50, borderRadius:8, fontSize:11, color:T.slate500 }}>
+            No posts published this week yet. Use the <strong>Create Content</strong> tab to start drafting.
+          </div>
+        )}
       </Card>
     </div>
   );
@@ -714,7 +830,7 @@ Please draft a complete, compliant post ready to publish. Include:
           <textarea
             value={topic}
             onChange={e => setTopic(e.target.value)}
-            placeholder="Describe what you want the post to be about. The more specific the better.\n\nExamples:\n• 'Spring storm season prep for Florida homeowners'\n• 'Spotlight on Main Street Bakery in our community'\n• 'Marcus just celebrated his 4-year work anniversary'\n• 'Myth bust: does a red car cost more to insure?'"
+            placeholder={"Describe what you want the post to be about. The more specific the better.\n\nExamples:\n• 'Spring storm season prep for Florida homeowners'\n• 'Spotlight on Main Street Bakery in our community'\n• 'Marcus just celebrated his 4-year work anniversary'\n• 'Myth bust: does a red car cost more to insure?'"}
             rows={5}
             style={{ width:"100%", padding:"10px 12px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", resize:"vertical", lineHeight:1.6, fontFamily:"inherit", boxSizing:"border-box" }}
           />
@@ -757,18 +873,48 @@ export default function SocialMedia() {
   const [showScheduler, setShowScheduler] = useState(false);
   const [newPost, setNewPost] = useState({platform:"facebook", content:"", post_date:"", status:"draft"});
 
+  // Live data from content_calendar
+  const [rawPosts, setRawPosts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [reloadTick, setReloadTick] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    supabase
+      .from("content_calendar")
+      .select("*")
+      .eq("agency_id", AGENCY_ID)
+      .order("scheduled_date", { ascending: false })
+      .order("scheduled_time", { ascending: false })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        if (error) {
+          console.error("[SocialMedia] content_calendar fetch error:", error);
+          setRawPosts([]);
+        } else {
+          setRawPosts(Array.isArray(data) ? data : []);
+        }
+        setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [reloadTick]);
+
+  const posts = useMemo(() => (rawPosts || []).map(transformPost), [rawPosts]);
+  const analytics = useMemo(() => computeAnalytics(posts), [posts]);
+
   const savePost = async (post) => {
     const { error } = await supabase.from("content_calendar").upsert([{
       ...post,
       agency_id: AGENCY_ID,
       updated_at: new Date().toISOString()
     }]);
-    if (!error) { setEditingPost(null); setShowScheduler(false); window.location.reload(); }
+    if (!error) { setEditingPost(null); setShowScheduler(false); setReloadTick(t => t + 1); }
   };
 
   const approvePost = async (postId) => {
     await supabase.from("content_calendar").update({status:"approved", approved_at: new Date().toISOString()}).eq("id", postId);
-    window.location.reload();
+    setReloadTick(t => t + 1);
   };
 
 
@@ -795,9 +941,9 @@ export default function SocialMedia() {
       </div>
 
       {/* Section Content */}
-      {section === "overview"  && <SocialOverview  posts={MOCK_POSTS} analytics={MOCK_ANALYTICS} />}
-      {section === "calendar"  && <ContentCalendar  posts={MOCK_POSTS} />}
-      {section === "analytics" && <Analytics        analytics={MOCK_ANALYTICS} />}
+      {section === "overview"  && <SocialOverview  posts={posts} analytics={analytics} loading={loading} onApprove={approvePost} onEdit={setEditingPost} onScheduleNew={() => setShowScheduler(s => !s)} />}
+      {section === "calendar"  && <ContentCalendar  posts={posts} loading={loading} />}
+      {section === "analytics" && <Analytics        analytics={analytics} loading={loading} />}
       {section === "platforms" && <PlatformGuide />}
       {section === "create"    && <CreateContent />}
     </div>
