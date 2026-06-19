@@ -81,99 +81,15 @@ const moduleConfig = (key) => MODULES[key] || MODULES.general;
 
 // ─── Goal Category Config ─────────────────────────────────────
 const GOAL_CATS = {
-  aipp:       { label:"AIPP",       color:T.green,  icon:"🎯" },
-  revenue:    { label:"Revenue",    color:T.blue,   icon:"💰" },
-  team:       { label:"Team",       color:T.purple, icon:"👥" },
-  compliance: { label:"Compliance", color:T.red,    icon:"🛡️" },
-  personal:   { label:"Personal",   color:T.amber,  icon:"⭐" },
-  growth:     { label:"Growth",     color:T.teal,   icon:"📈" },
+  aipp:          { label:"AIPP",            color:T.green,  icon:"🎯" },
+  revenue:       { label:"Revenue",         color:T.blue,   icon:"💰" },
+  team:          { label:"Team",            color:T.purple, icon:"👥" },
+  compliance:    { label:"Compliance",      color:T.red,    icon:"🛡️" },
+  personal:      { label:"Personal",        color:T.amber,  icon:"⭐" },
+  growth:        { label:"Growth",          color:T.teal,   icon:"📈" },
+  production_lh: { label:"L&H Production",  color:T.purple, icon:"📊" },
+  production:    { label:"Production",      color:T.blue,   icon:"📊" },
 };
-
-// ─── Mock Data ────────────────────────────────────────────────
-const MOCK_TASKS = [
-  // Open tasks
-  { id:"t1",  title:"Fix Daily Briefing automation — Gmail OAuth expired",       priority:"critical", status:"open",        module:"automations", due_date:"Apr 27, 2026", assigned_to:"Jane Smith",  created_by:"system",      description:"Gmail OAuth token expired causing Daily Briefing to fail. Reconnect Gmail in Composio dashboard.", created_at:"Today" },
-  { id:"t2",  title:"Complete monthly auto application compliance review",        priority:"high",     status:"open",        module:"compliance",  due_date:"Apr 30, 2026", assigned_to:"Jane Smith",  created_by:"system",      description:"Pull RAZ000BT report. Review all required auto app metrics. Review SAM report (RAZ000BV). Document findings.", created_at:"Apr 25" },
-  { id:"t3",  title:"Complete monthly Altered Monies history review",             priority:"high",     status:"open",        module:"financials",  due_date:"Apr 30, 2026", assigned_to:"Jane Smith",  created_by:"system",      description:"Review and document Altered Monies history for April. Required standing compliance item.", created_at:"Apr 25" },
-  { id:"t4",  title:"Manually post Instagram content — Monday April 27",          priority:"high",     status:"open",        module:"social",      due_date:"Apr 27, 2026", assigned_to:"Jane Smith",  created_by:"automations", description:"Behind the scenes at the agency this Monday morning. Coffee, team huddle, and a full week ahead. ☕ — scheduled for 11AM", created_at:"Today" },
-  { id:"t5",  title:"Review Q1 bank reconciliation",                               priority:"medium",   status:"open",        module:"financials",  due_date:"May 3, 2026",  assigned_to:"Jane Smith",  created_by:"claude",      description:"Q1 bank reconciliation is ready to review. Verify all GL entries match bank statements for January, February, and March.", created_at:"Apr 26" },
-  { id:"t6",  title:"Send Kimberly Yow reseller agreement for signature",          priority:"medium",   status:"in_progress", module:"general",     due_date:"May 5, 2026",  assigned_to:"Jane Smith",  created_by:"Jane Smith",  description:"Channel partner reseller agreement ready. Send via DocuSign and follow up within 3 business days.", created_at:"Apr 24" },
-  { id:"t7",  title:"Schedule discovery call with new prospect — Mike Anderson",   priority:"medium",   status:"open",        module:"general",     due_date:"May 1, 2026",  assigned_to:"Jane Smith",  created_by:"Jane Smith",  description:"Referred by Alyssa. Auto agency owner. Interested in BCC setup.", created_at:"Apr 23" },
-  { id:"t8",  title:"Post resume — April interview focus review with Marcus",      priority:"medium",   status:"open",        module:"hr",          due_date:"Apr 29, 2026", assigned_to:"Marcus T.",   created_by:"automations", description:"New applicant received — Jamie Chen. Claude score: 8/10. Review One Page Interview Focus together before scheduling interview.", created_at:"Apr 26" },
-  { id:"t9",  title:"Begin E&O insurance renewal process",                         priority:"low",      status:"open",        module:"compliance",  due_date:"May 1, 2026",  assigned_to:"Jane Smith",  created_by:"system",      description:"E&O insurance renews August 2026. Begin renewal process 90 days in advance. Contact Hartford for renewal quote.", created_at:"Apr 27" },
-  { id:"t10", title:"Update staff performance metrics for March",                  priority:"low",      status:"open",        module:"hr",          due_date:"May 3, 2026",  assigned_to:"Jane Smith",  created_by:"system",      description:"Log March KPIs for Marcus Thompson and Priya Patel in the staff performance table.", created_at:"Apr 1" },
-  { id:"t11", title:"Draft April social media batch for next week",                priority:"low",      status:"open",        module:"social",      due_date:"Apr 30, 2026", assigned_to:"Jane Smith",  created_by:"Jane Smith",  description:"Batch create May 4-8 social posts. Use content calendar framework: Mon Educate, Tue Community, Wed Connect, Thu Educate/Celebrate, Fri Invite.", created_at:"Apr 26" },
-
-  // Completed
-  { id:"t12", title:"Process April COMP_RECAP from State Farm",                   priority:"high",     status:"completed",   module:"financials",  due_date:"Apr 26, 2026", assigned_to:"Jane Smith",  created_by:"automations", description:"", created_at:"Apr 20", completed_at:"Apr 26" },
-  { id:"t13", title:"Run April payroll",                                           priority:"high",     status:"completed",   module:"financials",  due_date:"Apr 19, 2026", assigned_to:"Jane Smith",  created_by:"Jane Smith",  description:"", created_at:"Apr 15", completed_at:"Apr 19" },
-  { id:"t14", title:"Post Marcus work anniversary social content",                 priority:"medium",   status:"completed",   module:"social",      due_date:"Apr 25, 2026", assigned_to:"Jane Smith",  created_by:"Jane Smith",  description:"", created_at:"Apr 23", completed_at:"Apr 25" },
-  { id:"t15", title:"Complete Q1 staff performance review",                        priority:"medium",   status:"completed",   module:"hr",          due_date:"Apr 15, 2026", assigned_to:"Jane Smith",  created_by:"system",      description:"", created_at:"Apr 1",  completed_at:"Apr 14" },
-  { id:"t16", title:"March PFA bank statement reconciliation",                     priority:"high",     status:"completed",   module:"financials",  due_date:"Apr 14, 2026", assigned_to:"Jane Smith",  created_by:"system",      description:"", created_at:"Apr 1",  completed_at:"Apr 12" },
-];
-
-const MOCK_GOALS = [
-  {
-    id:"g1", title:"Hit AIPP Target — 2026",
-    description:"Achieve full AIPP payout for 2026 program year",
-    category:"aipp", unit:"dollars",
-    target_value:142000, current_value:67450,
-    target_date:"Dec 31, 2026",
-    status:"active",
-    notes:"On track — 47.5% achieved with 8 months remaining. Prior year final was $138,200.",
-    monthly_data:[15200,14800,18650,18800,0,0,0,0,0,0,0,0],
-  },
-  {
-    id:"g2", title:"Annual Revenue Target — 2026",
-    description:"Total agency gross revenue for the year",
-    category:"revenue", unit:"dollars",
-    target_value:580000, current_value:187420,
-    target_date:"Dec 31, 2026",
-    status:"active",
-    notes:"YTD $187,420 through April. On pace for $562K at current run rate — slightly below target. May need to push new business in Q2.",
-    monthly_data:[41200,38900,44600,48240,0,0,0,0,0,0,0,0],
-  },
-  {
-    id:"g3", title:"New Business Premium Growth — 15%",
-    description:"Grow new business premium by 15% vs 2025",
-    category:"growth", unit:"percentage",
-    target_value:15, current_value:9,
-    target_date:"Dec 31, 2026",
-    status:"active",
-    notes:"Currently at 9% growth YTD. Need to accelerate new business production in Q2-Q3.",
-    monthly_data:null,
-  },
-  {
-    id:"g4", title:"Add One Licensed Team Member — Q3",
-    description:"Hire and license one additional team member by September 2026",
-    category:"team", unit:"count",
-    target_value:1, current_value:0,
-    target_date:"Sep 30, 2026",
-    status:"active",
-    notes:"Resume Scanner is active. Jamie Chen interview in progress (score 8/10). Marcus can help onboard.",
-    monthly_data:null,
-  },
-  {
-    id:"g5", title:"Reduce Operating Expense Ratio Below 45%",
-    description:"Keep total operating expenses below 45% of gross income",
-    category:"revenue", unit:"percentage",
-    target_value:45, current_value:43.2,
-    target_date:"Dec 31, 2026",
-    status:"active",
-    notes:"Currently at 43.2% — ahead of target. Monitor payroll ratio as team grows.",
-    monthly_data:null,
-  },
-  {
-    id:"g6", title:"Complete Annual Compliance Training",
-    description:"Complete all required State Farm annual compliance and ethics training",
-    category:"compliance", unit:"count",
-    target_value:1, current_value:0,
-    target_date:"Dec 31, 2026",
-    status:"active",
-    notes:"Due by December 31. Schedule Q3 to allow time for completion.",
-    monthly_data:null,
-  },
-];
 
 // ─── Helpers ──────────────────────────────────────────────────
 const pct = (curr, target) => Math.min(100, Math.round((curr / target) * 100));
@@ -345,7 +261,7 @@ const TaskCard = ({ task, onComplete, onNavigate }) => {
 
 // ─── New Task Modal ───────────────────────────────────────────
 const NewTaskModal = ({ onSave, onCancel }) => {
-  const [form, setForm] = useState({ title:"", description:"", priority:"medium", module:"general", due_date:"", assigned_to:"Jane Smith" });
+  const [form, setForm] = useState({ title:"", description:"", priority:"medium", module:"general", due_date:"" });
   const set = (k, v) => setForm(f => ({ ...f, [k]:v }));
 
   return (
@@ -391,16 +307,24 @@ const NewTaskModal = ({ onSave, onCancel }) => {
               <input type="text" value={form.due_date} onChange={e => set("due_date", e.target.value)} placeholder="May 1, 2026"
                 style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", boxSizing:"border-box" }} />
             </div>
-            <div>
-              <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>ASSIGNED TO</label>
-              <input type="text" value={form.assigned_to} onChange={e => set("assigned_to", e.target.value)} placeholder="Jane Smith"
-                style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", boxSizing:"border-box" }} />
-            </div>
+
           </div>
         </div>
         <div style={{ padding:"12px 20px", borderTop:`1px solid ${T.slate200}`, display:"flex", justifyContent:"flex-end", gap:8 }}>
           <button onClick={onCancel} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate600, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>Cancel</button>
-          <button onClick={() => form.title.trim() && onSave({ ...form, id:`t${Date.now()}`, status:"open", created_by:"Jane Smith", created_at:"Today" })}
+          <button onClick={() => {
+              if (!form.title.trim()) return;
+              // Best-effort parse of the typed display date into YYYY-MM-DD.
+              // Empty string OR unparseable → null; main component sends null to Supabase.
+              let dueIso = null;
+              if (form.due_date && form.due_date.trim()) {
+                const parsed = new Date(form.due_date);
+                if (!isNaN(parsed.getTime())) {
+                  dueIso = parsed.toISOString().slice(0, 10);
+                }
+              }
+              onSave({ ...form, due_date_iso: dueIso });
+            }}
             disabled={!form.title.trim()}
             style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:form.title.trim()?T.navy:"#94A3B8", border:"none", borderRadius:7, cursor:form.title.trim()?"pointer":"not-allowed" }}>
             Create Task
@@ -576,7 +500,7 @@ const GoalsSection = ({ goals }) => {
         <div style={{ fontSize:13, color:T.slate500 }}>
           Track your agency goals and progress toward each target for {new Date().getFullYear()}.
         </div>
-        <AskBtn context={`My full goal progress for 2026:\n${goals.map(g=>`• ${g.title} (${g.category}): ${fmt(g.current_value,g.unit)} of ${fmt(g.target_value,g.unit)} = ${pct(g.current_value,g.target_value)}% — ${g.notes}`).join("\n")}\n\nGive me a comprehensive goal review. Which goals are at risk? What specific actions would move the needle most this month?`} />
+        <AskBtn context={`My full goal progress for ${new Date().getFullYear()}:\n${goals.map(g=>`• ${g.title} (${g.category}): ${fmt(g.current_value,g.unit)} of ${fmt(g.target_value,g.unit)} = ${pct(g.current_value,g.target_value)}%${g.notes?" — "+g.notes:""}`).join("\n")}\n\nGive me a comprehensive goal review. Which goals are at risk? What specific actions would move the needle most this month?`} />
       </div>
 
       <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
@@ -596,7 +520,7 @@ const GoalsSection = ({ goals }) => {
                     </div>
                     <div>
                       <div style={{ fontSize:14, fontWeight:700, color:T.slate900, letterSpacing:"-0.01em" }}>{goal.title}</div>
-                      <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>{goal.description} · Due {goal.target_date}</div>
+                      <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>{goal.description || ""} · Due {goal.target_date ? new Date(goal.target_date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "—"}</div>
                     </div>
                   </div>
                   <div style={{ display:"flex", alignItems:"center", gap:10, flexShrink:0 }}>
@@ -633,10 +557,16 @@ const GoalsSection = ({ goals }) => {
 
               {isExpanded && (
                 <div style={{ padding:"0 18px 16px", borderTop:`1px solid ${T.slate100}` }}>
-                  <div style={{ fontSize:12, color:T.slate600, lineHeight:1.7, marginTop:10, marginBottom:10 }}>
-                    {goal.notes}
-                  </div>
-                  <AskBtn size="small" context={`Goal deep dive:\nTitle: ${goal.title}\nCategory: ${goal.category}\nTarget: ${fmt(goal.target_value,goal.unit)}\nCurrent: ${fmt(goal.current_value,goal.unit)}\nProgress: ${p}%\nDue: ${goal.target_date}\nNotes: ${goal.notes}\n\nHelp me build a specific action plan to hit this goal. What do I need to do this month?`} />
+                  {goal.notes ? (
+                    <div style={{ fontSize:12, color:T.slate600, lineHeight:1.7, marginTop:10, marginBottom:10 }}>
+                      {goal.notes}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize:11, color:T.slate400, lineHeight:1.7, marginTop:10, marginBottom:10, fontStyle:"italic" }}>
+                      No notes on this goal.
+                    </div>
+                  )}
+                  <AskBtn size="small" context={`Goal deep dive:\nTitle: ${goal.title}\nCategory: ${goal.category}\nStatus: ${goal.status || "active"}\nTarget: ${fmt(goal.target_value,goal.unit)}\nCurrent: ${fmt(goal.current_value,goal.unit)}\nProgress: ${p}%\nDue: ${goal.target_date}${goal.notes?"\nNotes: "+goal.notes:""}\n\nHelp me build a specific action plan to hit this goal. What do I need to do this month?`} />
                 </div>
               )}
             </div>
@@ -683,38 +613,71 @@ const CompletedSection = ({ tasks }) => {
 // ─── Main Tasks & Goals Module ────────────────────────────────
 export default function TasksGoals({ onNavigate }) {
   const [section,  setSection]  = useState("overview");
-  const { data: liveTasks, loading: tasksLoading } = useSupabaseTable("tasks", AGENCY_ID, { orderBy: "due_date", ascending: true });
-  const { data: liveGoals, loading: goalsLoading } = useSupabaseTable("goals", AGENCY_ID, { orderBy: "target_date", ascending: true });
-  const useMockData = import.meta.env.VITE_USE_MOCK_DATA !== "false";
+  const { data: liveTasks, loading: tasksLoading, setData: setLiveTasks } =
+    useSupabaseTable("tasks", AGENCY_ID, { orderBy: "due_date", ascending: true });
+  const { data: liveGoals, loading: goalsLoading } =
+    useSupabaseTable("goals", AGENCY_ID, { orderBy: "target_date", ascending: true });
 
-  const [tasks, setTasks] = useState(useMockData ? MOCK_TASKS : []);
-  useEffect(() => {
-    if (liveTasks && liveTasks.length > 0) {
-      // Alias schema fields so existing render code (task.module, task.due_date, etc.) keeps working
-      setTasks(liveTasks.map(t => ({
-        ...t,
-        module:       t.module_reference || t.module || "general",
-        due_date:     t.due_date ? new Date(t.due_date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
-        completed_at: t.completed_at ? new Date(t.completed_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
-      })));
-    }
-  }, [liveTasks]);
+  // Format live task rows so existing render code (task.module, formatted dates, etc.) keeps working.
+  // Render is derived directly from liveTasks via useMemo — no separate setTasks state.
+  const tasks = useMemo(() => (Array.isArray(liveTasks) ? liveTasks : []).map(t => ({
+    ...t,
+    module:       t.module_reference || t.module || "general",
+    due_date:     t.due_date ? new Date(t.due_date).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
+    completed_at: t.completed_at ? new Date(t.completed_at).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) : "",
+  })), [liveTasks]);
 
-  const goals = (liveGoals && liveGoals.length > 0)
-    ? liveGoals
-    : useMockData ? MOCK_GOALS : [];
+  // Goals: show 'active' + 'reference' (reference rows are deliberate floor/push variants of the primary,
+  // not stale or completed). Render time will tag them. Don't show 'completed' or 'archived' here.
+  const goals = (Array.isArray(liveGoals) ? liveGoals : []).filter(g =>
+    !g.status || g.status === "active" || g.status === "reference"
+  );
 
   if (tasksLoading || goalsLoading) return <div style={{padding:40,textAlign:"center",fontSize:13,color:"#64748B"}}>Loading tasks and goals…</div>;
   if (tasks.length === 0 && goals.length === 0) return <EmptyState module="tasks" />;
 
-  const completeTask = (id) => {
-    setTasks(prev => prev.map(t => t.id === id
-      ? { ...t, status:"completed", completed_at:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}) }
-      : t
+  // Persist task completion to Supabase. Optimistic local update via setLiveTasks
+  // so the UI reflects immediately; revert on failure.
+  const completeTask = async (id) => {
+    const completedAt = new Date().toISOString();
+    const prev = liveTasks;
+    setLiveTasks(rows => (rows || []).map(t =>
+      t.id === id ? { ...t, status:"completed", completed_at: completedAt } : t
     ));
+    const { error } = await supabase
+      .from("tasks")
+      .update({ status:"completed", completed_at: completedAt })
+      .eq("id", id)
+      .eq("agency_id", AGENCY_ID);
+    if (error) {
+      console.error("completeTask failed:", error);
+      setLiveTasks(prev); // revert
+    }
   };
 
-  const addTask = (task) => setTasks(prev => [task, ...prev]);
+  // Persist new tasks to Supabase. Insert, then push the returned row into local state.
+  const addTask = async (task) => {
+    const payload = {
+      agency_id:        AGENCY_ID,
+      title:            task.title,
+      description:      task.description || null,
+      priority:         task.priority || "medium",
+      module_reference: task.module || null,
+      due_date:         task.due_date_iso || null,    // YYYY-MM-DD or null
+      status:           "open",
+      created_by:       "agent",
+    };
+    const { data, error } = await supabase
+      .from("tasks")
+      .insert(payload)
+      .select()
+      .single();
+    if (error) {
+      console.error("addTask failed:", error);
+      return;
+    }
+    setLiveTasks(rows => [data, ...(rows || [])]);
+  };
 
   const sections = [
     { id:"overview",  label:"Overview"   },
