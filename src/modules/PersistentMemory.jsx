@@ -123,7 +123,7 @@ const AskBtn = ({ context, size = "normal", demoMode = false }) => {
             {copied ? "\u2713 Context copied to your clipboard" : "Copying\u2026"}
           </div>
           <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8, lineHeight: 1.5 }}>
-            This is what Claude will see \u2014 your data from this screen.
+            This is what Claude will see — your data from this screen.
           </div>
           <div style={{ fontSize: 11, lineHeight: 1.55, color: T.slate500, background: T.slate100, borderRadius: 8, padding: 9, maxHeight: 92, overflow: "hidden", whiteSpace: "pre-wrap" }}>{preview}</div>
           <div style={{ marginTop: 10 }}>
@@ -133,16 +133,16 @@ const AskBtn = ({ context, size = "normal", demoMode = false }) => {
               </button>
             ) : demoMode ? (
               <div style={{ background: "#FFFBEB", border: "1px solid #D9770633", borderRadius: 8, padding: "8px 11px", fontSize: 11, lineHeight: 1.55, color: "#D97706" }}>
-                <strong>Demo mode.</strong> On a real BCC this opens the agent\u2019s own Claude.ai, ready to paste.
+                <strong>Demo mode.</strong> On a real BCC this opens the agent’s own Claude.ai, ready to paste.
               </div>
             ) : (
               <div style={{ background: "#ECFDF3", border: "1px solid #16A34A33", borderRadius: 8, padding: "8px 11px", fontSize: 11, lineHeight: 1.55, color: "#16A34A" }}>
-                \u2713 Claude.ai opened in a new tab \u2014 paste with Ctrl/\u2318+V.
+                ✓ Claude.ai opened in a new tab — paste with Ctrl/⌘+V.
               </div>
             )}
           </div>
           <div style={{ marginTop: 9, fontSize: 10, color: T.slate400, lineHeight: 1.5 }}>
-            Opens <em>your</em> Claude account \u2014 your subscription, your Project.
+            Opens <em>your</em> Claude account — your subscription, your Project.
           </div>
         </div>
       )}
@@ -175,7 +175,7 @@ const MemoryCard = ({ item, categoryConfig, onEdit }) => {
             {item.title || "(untitled)"}
           </div>
           <div style={{ fontSize: 10, color: T.slate400 }}>
-            Added by {addedByDisplay} \u00b7 {sourceDisplay}{updatedDisplay ? ` \u00b7 updated ${updatedDisplay}` : ""}
+            Added by {addedByDisplay} · {sourceDisplay}{updatedDisplay ? ` \u00b7 updated ${updatedDisplay}` : ""}
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
@@ -226,7 +226,7 @@ const EditModal = ({ item, categories, onSave, onCancel, onDelete, saving }) => 
           <div style={{ fontSize: 14, fontWeight: 700, color: T.slate900 }}>
             {isNew ? "Add Memory" : "Edit Memory"}
           </div>
-          <button onClick={onCancel} style={{ background: "none", border: "none", fontSize: 18, color: T.slate400, cursor: "pointer", lineHeight: 1 }}>\u00d7</button>
+          <button onClick={onCancel} style={{ background: "none", border: "none", fontSize: 18, color: T.slate400, cursor: "pointer", lineHeight: 1 }}>×</button>
         </div>
 
         <div style={{ padding: "20px", overflow: "auto" }}>
@@ -488,13 +488,13 @@ export default function PersistentMemory() {
 
       {/* Info Banner */}
       <div style={{ background: T.blueLt, border: `1px solid ${T.blue}20`, borderLeft: `4px solid ${T.blue}`, borderRadius: 10, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "flex-start", gap: 12 }}>
-        <span style={{ fontSize: 20, flexShrink: 0 }}>\ud83d\udca1</span>
+        <span style={{ fontSize: 20, flexShrink: 0 }}>💡</span>
         <div>
           <div style={{ fontSize: 12, fontWeight: 600, color: T.navy, marginBottom: 3 }}>
             How Claude uses this memory
           </div>
           <div style={{ fontSize: 11, color: T.slate600, lineHeight: 1.6 }}>
-            Every entry here is passed to Claude as context at the start of each conversation. Claude uses it to give you answers that are specific to your agency \u2014 not generic advice. The more complete and accurate this memory is, the more useful your Claude becomes. You and Claude can both add, edit, and update these entries at any time.
+            Every entry here is passed to Claude as context at the start of each conversation. Claude uses it to give you answers that are specific to your agency — not generic advice. The more complete and accurate this memory is, the more useful your Claude becomes. You and Claude can both add, edit, and update these entries at any time.
           </div>
         </div>
       </div>
@@ -527,7 +527,7 @@ export default function PersistentMemory() {
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 20, minWidth: 0 }}>
           {loading && (
             <div style={{ textAlign: "center", padding: "40px 20px", color: T.slate400, fontSize: 13 }}>
-              Loading memories\u2026
+              Loading memories…
             </div>
           )}
 
@@ -585,7 +585,7 @@ export default function PersistentMemory() {
                 )}
                 {isAudit && !isOpen && (
                   <div style={{ fontSize: 11, color: T.slate400, fontStyle: "italic", paddingLeft: 24 }}>
-                    {cat.description} \u2014 click header to expand.
+                    {cat.description} — click header to expand.
                   </div>
                 )}
               </div>
