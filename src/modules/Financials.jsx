@@ -118,7 +118,9 @@ function useFinancialsData() {
           // ScoreBoard
           supabase.from("scoreboard_tracking")
             .select("program_year, period, metric_name, target, actual, achievement_percentage, notes")
-            .order("program_year", { ascending: false }).limit(20),
+            .order("program_year", { ascending: false })
+            .order("metric_name", { ascending: true })
+            .limit(40),
         ]);
 
         const isData = isRows.data || [];
@@ -189,13 +191,22 @@ function useFinancialsData() {
           }),
         } : { year: currentYear, target: 0, earned: 0, projected: 0, priorYear: 0, monthlyEarned: months.map(m => ({month:m, amount:0})) };
 
-        // ScoreBoard — alias to {metric, actual, target, pct}
-        const scoreboard = (scoreboardRows.data || []).map(s => ({
-          metric: s.metric_name,
-          actual: parseFloat(s.actual || 0),
-          target: parseFloat(s.target || 0),
-          pct:    Math.round(parseFloat(s.achievement_percentage || 0)),
-        }));
+        // ScoreBoard — alias to {metric, actual, target, pct, year, notes}.
+        // target/pct stay null when SF hasn't published a target — the render
+        // shows a "Target pending" pill instead of a 0% danger pill.
+        const scoreboard = (scoreboardRows.data || []).map(s => {
+          const actualV = parseFloat(s.actual || 0);
+          const targetV = (s.target == null || s.target === "") ? null : parseFloat(s.target);
+          const pctV    = (targetV && targetV > 0) ? Math.round((actualV / targetV) * 100) : null;
+          return {
+            metric: s.metric_name,
+            actual: actualV,
+            target: targetV,
+            pct:    pctV,
+            year:   s.program_year,
+            notes:  s.notes || "",
+          };
+        });
 
         // Payroll — combine runs + detail, grouped by run
         const detailByRun = {};
@@ -754,37 +765,78 @@ const AIPPSection = ({ data }) => {
         {/* ScoreBoard */}
         <Card>
           <CardHeader
-            title="ScoreBoard Metrics — 2026"
-            sub="Progress toward performance recognition"
-            action={<AskBtn context="My ScoreBoard metrics for 2026: reviewing progress toward SF performance recognition. Help me identify which metrics need the most attention." />}
+            title={`ScoreBoard Bonuses — ${year}`}
+            sub={`Lump-sum bonus paid Mar 15 for ${year - 1} qualifying activity`}
+            action={<AskBtn context={`My ScoreBoard bonuses ${year}: reviewing what was paid for ${year - 1} qualifying activity, and what's accruing toward the ${year + 1} payout.`} />}
           />
-          {scoreboard.map((m, i) => (
-            <div key={i} style={{ marginBottom: 14 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                <span style={{ fontSize: 12, color: T.slate700 }}>{m.metric}</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontSize: 11, color: T.slate500 }}>{m.actual}/{m.target}</span>
-                  <Pill type={m.pct >= 100 ? "success" : m.pct >= 75 ? "warning" : "danger"}>
-                    {m.pct}%
-                  </Pill>
+          {(() => {
+            const cur = scoreboard.filter(m => m.year === year);
+            const prior = scoreboard.filter(m => m.year === year - 1);
+            if (cur.length === 0) {
+              return (
+                <div style={{ fontSize: 12, color: T.slate500, padding: "12px 0" }}>
+                  No ScoreBoard bonus data for {year} yet.
                 </div>
-              </div>
-              <ProgressBar
-                value={m.actual}
-                max={m.target}
-                color={m.pct >= 100 ? T.green : m.pct >= 75 ? T.amber : T.red}
-                height={6}
-              />
-            </div>
-          ))}
-          <div style={{
-            marginTop: 16, padding: "10px 12px",
-            background: T.slate50, borderRadius: 8,
-            fontSize: 11, color: T.slate600,
-            borderLeft: `3px solid ${T.amber}`,
-          }}>
-            Retention rate is above target — excellent. New Business Policies at 48% needs attention to hit ScoreBoard recognition level.
-          </div>
+              );
+            }
+            const curTotal = cur.reduce((s, m) => s + (Number.isFinite(m.actual) ? m.actual : 0), 0);
+            const priorTotal = prior.reduce((s, m) => s + (Number.isFinite(m.actual) ? m.actual : 0), 0);
+            const totalYoy = priorTotal > 0 ? Math.round(((curTotal / priorTotal) - 1) * 100) : null;
+            return (
+              <>
+                {cur.map((m, i) => {
+                  const priorMatch = prior.find(p => p.metric === m.metric);
+                  const priorAmt = priorMatch ? priorMatch.actual : null;
+                  const yoyPct = (priorAmt && priorAmt > 0)
+                    ? Math.round(((m.actual / priorAmt) - 1) * 100)
+                    : null;
+                  return (
+                    <div key={i} style={{ marginBottom: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <span style={{ fontSize: 12, color: T.slate700 }}>{m.metric}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 11, color: T.slate500 }}>
+                            {fmt(m.actual)}{m.target != null ? ` / ${fmt(m.target)}` : ""}
+                          </span>
+                          {m.target != null
+                            ? <Pill type={m.pct >= 100 ? "success" : m.pct >= 75 ? "warning" : "danger"}>{m.pct}%</Pill>
+                            : <Pill type="info">Target pending</Pill>}
+                        </div>
+                      </div>
+                      {m.target != null ? (
+                        <ProgressBar
+                          value={m.actual}
+                          max={m.target}
+                          color={m.pct >= 100 ? T.green : m.pct >= 75 ? T.amber : T.red}
+                          height={6}
+                        />
+                      ) : (
+                        <div style={{ fontSize: 10, color: T.slate400 }}>
+                          {yoyPct != null
+                            ? `${yoyPct >= 0 ? "+" : ""}${yoyPct}% vs ${year - 1} (${fmt(priorAmt)})`
+                            : `No ${year - 1} comparison available`}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <div style={{
+                  marginTop: 16, padding: "10px 12px",
+                  background: T.slate50, borderRadius: 8,
+                  fontSize: 11, color: T.slate600,
+                  borderLeft: `3px solid ${T.blue}`,
+                }}>
+                  <strong>{year} total: {fmt(curTotal)}</strong>
+                  {totalYoy != null && (
+                    <> · {totalYoy >= 0 ? "+" : ""}{totalYoy}% vs {year - 1} ({fmt(priorTotal)})</>
+                  )}
+                  {totalYoy == null && priorTotal === 0 && (
+                    <> · no {year - 1} baseline</>
+                  )}
+                </div>
+              </>
+            );
+          })()}
         </Card>
       </div>
     </div>
