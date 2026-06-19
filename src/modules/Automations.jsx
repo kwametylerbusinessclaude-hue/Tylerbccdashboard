@@ -192,7 +192,7 @@ const AskBtn = ({ context, size = "normal", demoMode = false }) => {
             {copied ? "\u2713 Context copied to your clipboard" : "Copying\u2026"}
           </div>
           <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8, lineHeight: 1.5 }}>
-            This is what Claude will see \u2014 your data from this screen.
+            This is what Claude will see — your data from this screen.
           </div>
           <div style={{ fontSize: 11, lineHeight: 1.55, color: T.slate500, background: T.slate100, borderRadius: 8, padding: 9, maxHeight: 92, overflow: "hidden", whiteSpace: "pre-wrap" }}>{preview}</div>
           <div style={{ marginTop: 10 }}>
@@ -206,12 +206,12 @@ const AskBtn = ({ context, size = "normal", demoMode = false }) => {
               </div>
             ) : (
               <div style={{ background: "#ECFDF3", border: "1px solid #16A34A33", borderRadius: 8, padding: "8px 11px", fontSize: 11, lineHeight: 1.55, color: "#16A34A" }}>
-                \u2713 Claude.ai opened in a new tab \u2014 paste with Ctrl/\u2318+V.
+                ✓ Claude.ai opened in a new tab — paste with Ctrl/⌘+V.
               </div>
             )}
           </div>
           <div style={{ marginTop: 9, fontSize: 10, color: T.slate400, lineHeight: 1.5 }}>
-            Opens <em>your</em> Claude account \u2014 your subscription, your Project.
+            Opens <em>your</em> Claude account — your subscription, your Project.
           </div>
         </div>
       )}
