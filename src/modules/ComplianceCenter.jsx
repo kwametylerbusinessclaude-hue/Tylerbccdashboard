@@ -164,7 +164,7 @@ const AskBtn = ({ context, size = "normal", demoMode = false }) => {
             {copied ? "\u2713 Context copied to your clipboard" : "Copying\u2026"}
           </div>
           <div style={{ fontSize: 11, color: T.slate500, marginBottom: 8, lineHeight: 1.5 }}>
-            This is what Claude will see \u2014 your data from this screen.
+            This is what Claude will see — your data from this screen.
           </div>
           <div style={{ fontSize: 11, lineHeight: 1.55, color: T.slate500, background: T.slate100, borderRadius: 8, padding: 9, maxHeight: 92, overflow: "hidden", whiteSpace: "pre-wrap" }}>{preview}</div>
           <div style={{ marginTop: 10 }}>
@@ -174,16 +174,16 @@ const AskBtn = ({ context, size = "normal", demoMode = false }) => {
               </button>
             ) : demoMode ? (
               <div style={{ background: "#FFFBEB", border: "1px solid #D9770633", borderRadius: 8, padding: "8px 11px", fontSize: 11, lineHeight: 1.55, color: "#D97706" }}>
-                <strong>Demo mode.</strong> On a real BCC this opens the agent\u2019s own Claude.ai, ready to paste.
+                <strong>Demo mode.</strong> On a real BCC this opens the agent’s own Claude.ai, ready to paste.
               </div>
             ) : (
               <div style={{ background: "#ECFDF3", border: "1px solid #16A34A33", borderRadius: 8, padding: "8px 11px", fontSize: 11, lineHeight: 1.55, color: "#16A34A" }}>
-                \u2713 Claude.ai opened in a new tab \u2014 paste with Ctrl/\u2318+V.
+                ✓ Claude.ai opened in a new tab — paste with Ctrl/⌘+V.
               </div>
             )}
           </div>
           <div style={{ marginTop: 9, fontSize: 10, color: T.slate400, lineHeight: 1.5 }}>
-            Opens <em>your</em> Claude account \u2014 your subscription, your Project.
+            Opens <em>your</em> Claude account — your subscription, your Project.
           </div>
         </div>
       )}
@@ -267,7 +267,7 @@ const ComplianceDashboard = ({ rules, calendar, log }) => {
         {/* Critical Rules Quick Reference */}
         <Card>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
-            <span style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Critical rules \u2014 quick reference</span>
+            <span style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Critical rules — quick reference</span>
           </div>
           {criticalRef.length === 0 && (
             <div style={{ fontSize:12, color:T.slate400, fontStyle:"italic" }}>No critical rules.</div>
@@ -300,7 +300,7 @@ const ComplianceDashboard = ({ rules, calendar, log }) => {
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontSize:12, color:T.slate800 }}>{entry.description}</div>
                 <div style={{ fontSize:10, color:T.slate400, marginTop:2 }}>
-                  {fmtDate(entry.created_at)} \u00b7 {entry.created_by || "system"}
+                  {fmtDate(entry.created_at)} · {entry.created_by || "system"}
                 </div>
               </div>
             </div>
@@ -407,7 +407,7 @@ const RulesLibrary = ({ rules }) => {
                   )}
                   <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
                     <div style={{ fontSize:10, color:T.slate400 }}>
-                      \ud83d\udcdc <em>{rule.source || "(no source cited)"}</em>
+                      📜 <em>{rule.source || "(no source cited)"}</em>
                     </div>
                     <AskBtn size="small" context={`Compliance rule: ${rule.title} (${rule.rule_code || "no code"})\n\nDescription: ${rule.description}\n\nSource: ${rule.source || "(none)"}\n\nHelp me understand this rule and how it applies to my agency. What are the most common ways agents accidentally violate this?`} />
                   </div>
@@ -446,7 +446,7 @@ const PrePostChecklist = ({ checklistRules }) => {
         <div>
           <div style={{ fontSize:13, fontWeight:600, color:T.slate800 }}>Social Media Pre-Post Compliance Checklist</div>
           <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>
-            Run every piece of content through all {total} items before publishing \u00b7 {sessionDate}
+            Run every piece of content through all {total} items before publishing · {sessionDate}
           </div>
         </div>
         <div style={{ display:"flex", gap:8 }}>
@@ -459,10 +459,10 @@ const PrePostChecklist = ({ checklistRules }) => {
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8, flexWrap:"wrap", gap:8 }}>
           <span style={{ fontSize:12, fontWeight:600, color:T.slate700 }}>{checkedCount} of {total} items verified</span>
           {allPassed
-            ? <span style={{ fontSize:11, fontWeight:600, padding:"3px 10px", borderRadius:20, background:T.greenLt, color:"#065F46" }}>\u2713 All Clear \u2014 Safe to Post</span>
+            ? <span style={{ fontSize:11, fontWeight:600, padding:"3px 10px", borderRadius:20, background:T.greenLt, color:"#065F46" }}>✓ All Clear — Safe to Post</span>
             : criticalPassed && criticalItems.length > 0
-              ? <span style={{ fontSize:11, fontWeight:600, padding:"3px 10px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>Critical Items Passed \u2014 Review Warnings</span>
-              : <span style={{ fontSize:11, fontWeight:600, padding:"3px 10px", borderRadius:20, background:T.redLt, color:"#991B1B" }}>Do Not Post \u2014 Critical Items Pending</span>
+              ? <span style={{ fontSize:11, fontWeight:600, padding:"3px 10px", borderRadius:20, background:T.amberLt, color:"#92400E" }}>Critical Items Passed — Review Warnings</span>
+              : <span style={{ fontSize:11, fontWeight:600, padding:"3px 10px", borderRadius:20, background:T.redLt, color:"#991B1B" }}>Do Not Post — Critical Items Pending</span>
           }
         </div>
         <div style={{ height:8, background:T.slate100, borderRadius:4, overflow:"hidden" }}>
@@ -502,7 +502,7 @@ const PrePostChecklist = ({ checklistRules }) => {
                 display:"flex", alignItems:"center", justifyContent:"center",
                 transition:"all 0.15s",
               }}>
-                {isChecked && <span style={{ color:T.white, fontSize:12, lineHeight:1 }}>\u2713</span>}
+                {isChecked && <span style={{ color:T.white, fontSize:12, lineHeight:1 }}>✓</span>}
               </div>
 
               <div style={{ flex:1, minWidth:0 }}>
@@ -522,7 +522,7 @@ const PrePostChecklist = ({ checklistRules }) => {
 
       {allPassed && (
         <div style={{ marginTop:14, padding:"12px 16px", background:T.greenLt, border:`1px solid #BBF7D0`, borderRadius:10, fontSize:12, color:"#065F46" }}>
-          \u2713 All {total} compliance items verified. This content is cleared for publishing. Log this review in the Audit Log tab before posting.
+          ✓ All {total} compliance items verified. This content is cleared for publishing. Log this review in the Audit Log tab before posting.
         </div>
       )}
     </div>
@@ -665,7 +665,7 @@ const AuditLog = ({ log, onAdd, saving }) => {
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontSize:12, color:T.slate800, lineHeight:1.5 }}>{entry.description}</div>
                 <div style={{ fontSize:10, color:T.slate400, marginTop:3 }}>
-                  {fmtDate(entry.created_at)} \u00b7 {entry.created_by || "system"} \u00b7 {(entry.event_type || "").replace(/_/g," ")}
+                  {fmtDate(entry.created_at)} · {entry.created_by || "system"} · {(entry.event_type || "").replace(/_/g," ")}
                 </div>
               </div>
             </div>
@@ -809,13 +809,13 @@ export default function ComplianceCenter() {
 
       {/* AA05 Notice */}
       <div style={{ background:T.blueLt, border:`1px solid ${T.blue}20`, borderLeft:`4px solid ${T.blue}`, borderRadius:10, padding:"12px 16px", marginBottom:16, display:"flex", alignItems:"flex-start", gap:12 }}>
-        <span style={{ fontSize:18, flexShrink:0 }}>\ud83d\udcdc</span>
+        <span style={{ fontSize:18, flexShrink:0 }}>📜</span>
         <div>
           <div style={{ fontSize:12, fontWeight:600, color:T.navy, marginBottom:2 }}>
             These rules are grounded in your AA05 Agent Agreement
           </div>
           <div style={{ fontSize:11, color:T.slate600, lineHeight:1.6 }}>
-            Every compliance rule in this library cites the AA05 clause or regulatory requirement that makes it binding. Your Claude uses this library as guardrails in every conversation \u2014 it will push back when you ask it to generate non-compliant content, and it will explain exactly which contract clause applies.
+            Every compliance rule in this library cites the AA05 clause or regulatory requirement that makes it binding. Your Claude uses this library as guardrails in every conversation — it will push back when you ask it to generate non-compliant content, and it will explain exactly which contract clause applies.
           </div>
         </div>
       </div>
@@ -842,7 +842,7 @@ export default function ComplianceCenter() {
             onClick={() => setShowAddRule(v => !v)}
             style={{ padding:"7px 16px", fontSize:12, fontWeight:600, background:T.navy, color:T.white, border:"none", borderRadius:8, cursor:"pointer", display:"flex", alignItems:"center", gap:6 }}
           >
-            \u2795 Add Custom Rule
+            ➕ Add Custom Rule
           </button>
         )}
       </div>
@@ -906,7 +906,7 @@ export default function ComplianceCenter() {
 
       {/* Section content */}
       {loading && (
-        <div style={{ textAlign:"center", padding:"40px 20px", color:T.slate400, fontSize:13 }}>Loading compliance data\u2026</div>
+        <div style={{ textAlign:"center", padding:"40px 20px", color:T.slate400, fontSize:13 }}>Loading compliance data…</div>
       )}
       {!loading && section === "dashboard" && <ComplianceDashboard rules={rules} calendar={calendar} log={log} />}
       {!loading && section === "rules"     && <RulesLibrary rules={rules} />}
