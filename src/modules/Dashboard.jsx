@@ -242,24 +242,39 @@ const TasksWidget = ({ data, onNavigate }) => {
   );
 };
 
-// ── Widget: Open Items (Claude waiting on answers) ────────────
+// ── Widget: Items Waiting on Owner Input ──────────────────────
+// Reads from data.tasks (live). Excludes 'goals' (Q3 SFL weekly cadence
+// prompts — TasksWidget surfaces those via high-priority filter) and
+// 'HRPeople' (dormant 2027 future-trigger). What remains: suspense
+// classifications, CPA asks, owner-paced sends, content reviews, setup
+// replies — the things Claude is genuinely blocked on.
 const OpenItemsWidget = ({ data, onNavigate }) => {
-  const openItems = (data.openItems || data.persistentMemory || [])
-    .filter(m => m.memory_type === "open_item" || m.needs_followup === true || m.is_active === true || m.status === "pending_agent_input")
+  const openItems = (data.tasks || [])
+    .filter(t => t.status === "open"
+              && t.module_reference !== "goals"
+              && t.module_reference !== "HRPeople")
+    .sort((a, b) => {
+      const da = a.due_date || "9999-99-99";
+      const db = b.due_date || "9999-99-99";
+      return da.localeCompare(db);
+    })
     .slice(0, 5);
   return (
     <Card>
-      <SectionTitle icon="🔍" title="Open Items — Claude Needs Your Input"
-        action={<button onClick={()=>onNavigate("memory")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View All →</button>}
+      <SectionTitle icon="🔍" title="Items Waiting on Your Input"
+        action={<button onClick={()=>onNavigate("tasks")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>All Tasks →</button>}
       />
       {openItems.length === 0 ? (
-        <EmptyRow message="No open items — Claude has everything it needs ✨" />
+        <EmptyRow message="Nothing waiting on you — Claude has what it needs ✨" />
       ) : (
         <div style={{display:"flex", flexDirection:"column", gap:8}}>
-          {openItems.map((item,i) => (
+          {openItems.map((t,i) => (
             <div key={i} style={{padding:"8px 10px", borderRadius:8, background:T.amberLt, border:`1px solid #FDE68A`}}>
-              <div style={{fontSize:12, fontWeight:600, color:"#92400E"}}>{item.title||item.content?.slice(0,60)||"Pending item"}</div>
-              {item.context && <div style={{fontSize:10, color:"#B45309", marginTop:2}}>{item.context.slice(0,80)}</div>}
+              <div style={{fontSize:12, fontWeight:600, color:"#92400E"}}>{t.title}</div>
+              <div style={{fontSize:10, color:"#B45309", marginTop:2}}>
+                {t.due_date ? `Due ${t.due_date}` : "No due date"}
+                {t.module_reference ? ` · ${t.module_reference}` : ""}
+              </div>
             </div>
           ))}
         </div>
