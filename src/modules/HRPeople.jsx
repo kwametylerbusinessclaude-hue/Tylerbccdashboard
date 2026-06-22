@@ -576,9 +576,13 @@ const StaffDirectory = ({ staff }) => {
 
               <div style={{ textAlign:"right", flexShrink:0 }}>
                 <div style={{ fontSize:13, fontWeight:700, color:T.slate900 }}>
-                  {member.pay_type === "hourly" ? `$${member.pay_rate}/hr` : `$${member.pay_rate.toLocaleString()}/yr`}
+                  {member.pay_rate == null
+                    ? <span style={{ color:T.slate400, fontWeight:500 }}>—</span>
+                    : member.pay_type === "hourly"
+                      ? `$${member.pay_rate}/hr`
+                      : `$${Number(member.pay_rate).toLocaleString()}/yr`}
                 </div>
-                <div style={{ fontSize:10, color:T.slate400 }}>{member.pay_type.replace(/_/g," ")}</div>
+                <div style={{ fontSize:10, color:T.slate400 }}>{(member.pay_type || "rate not set").replace(/_/g," ")}</div>
               </div>
 
               <span style={{ color:T.slate400, fontSize:12 }}>{isExpanded?"▲":"▼"}</span>
@@ -590,7 +594,7 @@ const StaffDirectory = ({ staff }) => {
                   {[
                     { label:"Email",      value:member.email },
                     { label:"Phone",      value:member.phone||"—" },
-                    { label:"Licensed States", value:member.license_states.length>0?member.license_states.join(", "):"None" },
+                    { label:"Licensed States", value:(Array.isArray(member.license_states) && member.license_states.length>0) ? member.license_states.join(", ") : "—" },
                     { label:"Start Date", value:member.start_date },
                   ].map((d,i) => (
                     <div key={i} style={{ background:T.slate50, borderRadius:8, padding:"7px 10px" }}>
