@@ -184,10 +184,23 @@ function useFinancialsData() {
           priorYear:     aippPrior ? parseFloat(aippPrior.earned_ytd) || 0 : 0,
           monthlyEarned: months.map((m,i) => {
             const mo = i + 1;
-            const earned = compRecapsRaw
-              .filter(r => r.period_year === currentYear && r.period_month === mo && r.is_aipp_eligible)
+            // Canonical AIPP formula (per aipp_intelligence memory 2026-06-18, confirmed by Kwame):
+            //   AIPP earned = 5% × (NEW Auto + NEW Fire) for the calendar year.
+            //   NEW Auto  = comp_type IN ('MUTL','STDAUTO') AND comp_category IN ('new_business','new_amd66')
+            //   NEW Fire  = comp_type = 'FIRE'              AND comp_category IN ('new_business','new_amd66')
+            // The is_aipp_eligible flag on comp_recap is over-inclusive (includes renewals,
+            // SFL first-year writing, etc.). Using it here caused bricks to sum to $232K while
+            // aipp_tracking.earned_ytd correctly showed $1,517. Fixed 2026-06-22.
+            const isNewAuto = (r) =>
+              (r.comp_type === "MUTL" || r.comp_type === "STDAUTO") &&
+              (r.comp_category === "new_business" || r.comp_category === "new_amd66");
+            const isNewFire = (r) =>
+              r.comp_type === "FIRE" &&
+              (r.comp_category === "new_business" || r.comp_category === "new_amd66");
+            const base = compRecapsRaw
+              .filter(r => r.period_year === currentYear && r.period_month === mo && (isNewAuto(r) || isNewFire(r)))
               .reduce((s,r) => s + parseFloat(r.amount || 0), 0);
-            return { month: m, amount: Math.round(earned) };
+            return { month: m, amount: Math.round(base * 0.05) };
           }),
         } : { year: currentYear, target: 0, earned: 0, projected: 0, priorYear: 0, monthlyEarned: months.map(m => ({month:m, amount:0})) };
 
