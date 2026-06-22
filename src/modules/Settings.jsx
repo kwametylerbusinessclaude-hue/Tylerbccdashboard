@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { supabase, AGENCY_ID } from "../lib/supabase.js";
 // eslint-disable-next-line no-unused-vars
 // import { useState } from "react";
@@ -63,50 +63,9 @@ const ROLES = {
   accountant:{ label:"Accountant", color:T.purple, bg:T.purpleLt,description:"Financials and Documents read-only access" },
 };
 
-// ─── Mock Data ────────────────────────────────────────────────
-const MOCK_USERS = [
-  { id:"u1", name:"Jane Smith",    email:"jane@smithagency.com",    role:"owner",     last_login:"Today 8:14 AM",    is_active:true,  is_current:true  },
-  { id:"u2", name:"Marcus Thompson",email:"marcus@smithagency.com", role:"staff",     last_login:"Today 9:02 AM",    is_active:true,  is_current:false },
-  { id:"u3", name:"Priya Patel",   email:"priya@smithagency.com",   role:"manager",   last_login:"Yesterday 5:30 PM",is_active:true,  is_current:false },
-  { id:"u4", name:"Steven Bonventre",email:"steven@clubcapitaltax.com",role:"accountant",last_login:"Apr 14, 2026",  is_active:true,  is_current:false },
-];
 
-const MOCK_CONNECTIONS = [
-  { id:"c1", platform:"Gmail",          icon:"📧", status:"error",   account:"jane@smithagency.com",        last_sync:"Today 6:00 AM",    note:"OAuth token expired — reconnect required" },
-  { id:"c2", platform:"Google Drive",   icon:"📁", status:"healthy", account:"jane@smithagency.com",        last_sync:"Yesterday 11:00 PM",note:"Active" },
-  { id:"c3", platform:"Google Calendar",icon:"📅", status:"healthy", account:"jane@smithagency.com",        last_sync:"Today 7:00 AM",    note:"Active" },
-  { id:"c4", platform:"Facebook",       icon:"👥", status:"healthy", account:"Smith Insurance Agency Page", last_sync:"Yesterday 9:00 AM", note:"Active" },
-  { id:"c5", platform:"LinkedIn",       icon:"💼", status:"healthy", account:"Jane Smith",                  last_sync:"Yesterday 12:00 PM",note:"Active" },
-  { id:"c6", platform:"Instagram",      icon:"📸", status:"manual",  account:"@smithinsurance",             last_sync:"N/A",              note:"Manual posting required — no API scheduling" },
-];
 
-const MOCK_AGENCY = {
-  name:          "Smith Insurance Agency",
-  owner_name:    "Jane Smith",
-  entity_type:   "S-Corporation",
-  tax_id:        "••-•••1847",
-  sf_agent_code: "IL 22-441A",
-  licensing_states:["IL","WI","IN"],
-  primary_email: "jane@smithagency.com",
-  phone:         "(312) 555-0182",
-  address:       "1420 N. Michigan Ave, Suite 301, Chicago, IL 60610",
-  google_account:"jane@smithagency.com",
-  vercel_url:    "smith-insurance-bcc.vercel.app",
-  setup_date:    "April 15, 2026",
-};
 
-const MOCK_CONFIG = {
-  timezone:          "America/Chicago",
-  fiscal_year_start: "January 1",
-  accounting_method: "Cash Basis",
-  currency:          "USD",
-  briefing_time:     "6:00 AM",
-  briefing_email:    "jane@smithagency.com",
-  briefing_enabled:  true,
-  aipp_target:       142000,
-  aipp_year:         2026,
-  dashboard_period:  "mtd",
-};
 
 // ─── Shared Components ────────────────────────────────────────
 const Card = ({ children, style={} }) => (
@@ -858,6 +817,59 @@ export default function Settings() {
 
   const [section, setSection] = useState("profile");
 
+  // Derive a live view of Composio connections from settingsData rows whose
+  // setting_key matches composio_*_auth_config_id.  Status is "configured" when
+  // the auth_config_id is populated, else "missing".  The actual healthy/error
+  // signal is in the Composio dashboard — surfacing here just confirms BCC has
+  // the binding stored.
+  const PLATFORM_FROM_KEY = {
+    composio_gmail_auth_config_id:          { platform: "Gmail",           icon: "✉️"  },
+    composio_googledrive_auth_config_id:    { platform: "Google Drive",    icon: "📁" },
+    composio_googlecalendar_auth_config_id: { platform: "Google Calendar", icon: "📅" },
+    composio_googledocs_auth_config_id:     { platform: "Google Docs",     icon: "📄" },
+    composio_googlesheets_auth_config_id:   { platform: "Google Sheets",   icon: "📊" },
+    composio_facebook_auth_config_id:       { platform: "Facebook",        icon: "👥" },
+    composio_linkedin_auth_config_id:       { platform: "LinkedIn",        icon: "💼" },
+    composio_instagram_auth_config_id:      { platform: "Instagram",       icon: "📸" },
+    composio_canva_auth_config_id:          { platform: "Canva",           icon: "🎨" },
+    composio_telegram_auth_config_id:       { platform: "Telegram",        icon: "📨" },
+  };
+  const connections = useMemo(() => {
+    const out = [];
+    for (const row of (settingsData || [])) {
+      const meta = PLATFORM_FROM_KEY[row.setting_key];
+      if (!meta) continue;
+      out.push({
+        id: row.setting_key,
+        platform: meta.platform,
+        icon: meta.icon,
+        status: row.setting_value ? "configured" : "missing",
+        account: row.setting_value ? row.setting_value : "(not bound)",
+        last_sync: row.updated_at || "—",
+        note: row.setting_value ? "Binding present" : "No auth_config_id stored",
+      });
+    }
+    return out;
+  }, [settingsData]);
+
+  // Derive a config view from agencyData + select settingsData keys.
+  const config = useMemo(() => {
+    const get = (k) => (settingsData || []).find(r => r.setting_key === k)?.setting_value || null;
+    return {
+      timezone:          get("agency_timezone") || "America/Chicago",
+      fiscal_year_start: agencyData?.fiscal_year_start || "January 1",
+      accounting_method: "Cash Basis",
+      currency:          "USD",
+      briefing_time:     get("daily_briefing_time") || "6:00 AM",
+      briefing_email:    get("owner_email") || agencyData?.primary_email || "—",
+      briefing_enabled:  true,
+      aipp_target:       null,
+      aipp_year:         new Date().getFullYear(),
+      dashboard_period:  "mtd",
+    };
+  }, [agencyData, settingsData]);
+
+
   const sections = [
     { id:"profile",     label:"Agency Profile"    },
     { id:"team",        label:"Team Access"        },
@@ -886,11 +898,11 @@ export default function Settings() {
       </div>
 
       {/* Section Content */}
-      {section === "profile"     && <AgencyProfile      agency={MOCK_AGENCY} />}
-      {section === "team"        && <TeamAccess         users={MOCK_USERS} />}
-      {section === "connections" && <ConnectedAccounts  connections={MOCK_CONNECTIONS} />}
-      {section === "config"      && <BCCConfiguration   config={MOCK_CONFIG} />}
-      {section === "about"       && <About              agency={MOCK_AGENCY} />}
+      {section === "profile"     && <AgencyProfile      agency={agencyData || {}} />}
+      {section === "team"        && <TeamAccess         users={usersData || []} />}
+      {section === "connections" && <ConnectedAccounts  connections={connections} />}
+      {section === "config"      && <BCCConfiguration   config={config} />}
+      {section === "about"       && <About              agency={agencyData || {}} />}
     </div>
   );
 }
