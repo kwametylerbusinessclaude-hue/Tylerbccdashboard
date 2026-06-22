@@ -76,7 +76,7 @@ const MOCK_AGENCY = {
   name: "Smith Insurance Agency",
   agentCode: "IL 22-441A",
   user: { name: "Jane Smith", initials: "JS", role: "owner", email: "jane@smithinsurance.com" },
-  alerts: 3,
+  alerts: 0, // Initial value; the real unresolved-alert count is loaded from Supabase in useEffect below.
 };
 
 // ─── Navigation Config ────────────────────────────────────────────────────────
@@ -410,13 +410,20 @@ export default function BCCApp() {
 
   useEffect(() => {
     if (!supabase || !AGENCY_ID) return;
-    supabase
-      .from("agency")
-      .select("name, state_farm_agent_code, owner_name, primary_email")
-      .eq("id", AGENCY_ID)
-      .single()
-      .then(({ data, error }) => {
-        if (error || !data) return; // graceful fallback to MOCK_AGENCY
+    // Two reads in parallel: agency identity + live unresolved-alert count.
+    // alerts count is what the bell badge in the top bar reflects, so it must come from
+    // the alerts table (is_resolved=false), not a hardcoded MOCK value.
+    Promise.all([
+      supabase.from("agency")
+        .select("name, state_farm_agent_code, owner_name, primary_email")
+        .eq("id", AGENCY_ID).single(),
+      supabase.from("alerts")
+        .select("id", { count: "exact", head: true })
+        .eq("agency_id", AGENCY_ID).eq("is_resolved", false),
+    ]).then(([agencyRes, alertsRes]) => {
+      const data = agencyRes.data;
+      const alertCount = (alertsRes && !alertsRes.error) ? (alertsRes.count || 0) : 0;
+      if (data) {
         setAgency({
           name: data.name || MOCK_AGENCY.name,
           agentCode: data.state_farm_agent_code || MOCK_AGENCY.agentCode,
@@ -427,9 +434,13 @@ export default function BCCApp() {
             role: "owner",
             email: data.primary_email || MOCK_AGENCY.user.email,
           },
-          alerts: MOCK_AGENCY.alerts,
+          alerts: alertCount,
         });
-      });
+      } else {
+        // agency fetch failed but alerts read may still be valid — at least sync the badge.
+        setAgency(a => ({ ...a, alerts: alertCount }));
+      }
+    });
   }, []);
 
   const visibleNav = NAV_ITEMS.filter(n => n.roles.includes(agency.user.role));
