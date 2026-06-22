@@ -604,15 +604,22 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd }) => {
 };
 
 // ─── Section: Goals ───────────────────────────────────────────
-const GoalsSection = ({ goals }) => {
+const GoalsSection = ({ goals, onAdd, onUpdate, onDelete }) => {
   const [expanded, setExpanded] = useState(null);
+  const [editing,  setEditing]  = useState(null); // null=closed, "new"=create, <id>=edit
+
+  const editingGoal = editing && editing !== "new" ? goals.find(g => g.id === editing) : null;
 
   return (
     <div>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-        <div style={{ fontSize:13, color:T.slate500 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, gap:12, flexWrap:"wrap" }}>
+        <div style={{ fontSize:13, color:T.slate500, flex:1, minWidth:240 }}>
           Track your agency goals and progress toward each target for {new Date().getFullYear()}.
         </div>
+        <button onClick={() => setEditing("new")}
+          style={{ display:"flex", alignItems:"center", gap:6, padding:"7px 14px", fontSize:11, fontWeight:600, color:T.white, background:T.navy, border:"none", borderRadius:7, cursor:"pointer", marginRight:8 }}>
+          + New Goal
+        </button>
         <AskBtn context={`My full goal progress for ${new Date().getFullYear()}:\n${goals.map(g=>`• ${g.title} (${g.category}): ${fmt(g.current_value,g.unit)} of ${fmt(g.target_value,g.unit)} = ${pct(g.current_value,g.target_value)}%${g.notes?" — "+g.notes:""}`).join("\n")}\n\nGive me a comprehensive goal review. Which goals are at risk? What specific actions would move the needle most this month?`} />
       </div>
 
