@@ -335,9 +335,121 @@ const NewTaskModal = ({ onSave, onCancel }) => {
   );
 };
 
+// ─── New / Edit Goal Modal ────────────────────────────────────
+// Doubles as create (initial=null) and edit (initial=goal row). Persists category, title,
+// description, target_value, current_value, unit, target_date, notes. The numeric coercion
+// happens on save so the UI never crashes on empty strings.
+const NewGoalModal = ({ initial, onSave, onCancel, onDelete }) => {
+  const isEdit = !!initial;
+  const [form, setForm] = useState({
+    title:         initial?.title         || "",
+    description:   initial?.description   || "",
+    category:      initial?.category      || "revenue",
+    target_value:  initial?.target_value != null ? String(initial.target_value)  : "",
+    current_value: initial?.current_value != null ? String(initial.current_value) : "0",
+    unit:          initial?.unit          || "dollars",
+    target_date:   initial?.target_date   || "",
+    notes:         initial?.notes         || "",
+  });
+  const set = (k, v) => setForm(f => ({ ...f, [k]:v }));
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(15,23,42,0.5)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:1000, padding:20 }}>
+      <div style={{ background:T.white, borderRadius:16, width:"100%", maxWidth:540, boxShadow:"0 20px 60px rgba(0,0,0,0.2)", overflow:"hidden", maxHeight:"90vh", display:"flex", flexDirection:"column" }}>
+        <div style={{ padding:"16px 20px", borderBottom:`1px solid ${T.slate200}`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+          <span style={{ fontSize:14, fontWeight:700, color:T.slate900 }}>{isEdit ? "Edit Goal" : "New Goal"}</span>
+          <button onClick={onCancel} style={{ background:"none", border:"none", fontSize:18, color:T.slate400, cursor:"pointer" }}>×</button>
+        </div>
+        <div style={{ padding:20, overflowY:"auto" }}>
+          <div style={{ marginBottom:12 }}>
+            <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>TITLE</label>
+            <input value={form.title} onChange={e => set("title", e.target.value)} placeholder="What's the goal?"
+              style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", boxSizing:"border-box" }} />
+          </div>
+          <div style={{ marginBottom:12 }}>
+            <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>DESCRIPTION</label>
+            <textarea value={form.description} onChange={e => set("description", e.target.value)} placeholder="Context, rationale, success criteria..." rows={2}
+              style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", resize:"vertical", fontFamily:"inherit", boxSizing:"border-box" }} />
+          </div>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12, marginBottom:12 }}>
+            <div>
+              <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>CATEGORY</label>
+              <select value={form.category} onChange={e => set("category", e.target.value)}
+                style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:8, background:T.white, outline:"none" }}>
+                {Object.keys(GOAL_CATS).map(k => <option key={k} value={k}>{GOAL_CATS[k].icon} {GOAL_CATS[k].label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>UNIT</label>
+              <select value={form.unit} onChange={e => set("unit", e.target.value)}
+                style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate700, border:`1px solid ${T.slate200}`, borderRadius:8, background:T.white, outline:"none" }}>
+                <option value="dollars">$ Dollars</option>
+                <option value="count">Count</option>
+                <option value="percentage">Percentage</option>
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>TARGET VALUE</label>
+              <input type="number" inputMode="decimal" value={form.target_value} onChange={e => set("target_value", e.target.value)} placeholder="e.g. 4430"
+                style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", boxSizing:"border-box" }} />
+            </div>
+            <div>
+              <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>CURRENT VALUE</label>
+              <input type="number" inputMode="decimal" value={form.current_value} onChange={e => set("current_value", e.target.value)} placeholder="0"
+                style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", boxSizing:"border-box" }} />
+            </div>
+            <div style={{ gridColumn:"1 / -1" }}>
+              <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>TARGET DATE (YYYY-MM-DD)</label>
+              <input type="date" value={form.target_date} onChange={e => set("target_date", e.target.value)}
+                style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", boxSizing:"border-box" }} />
+            </div>
+          </div>
+          <div style={{ marginBottom:4 }}>
+            <label style={{ fontSize:11, fontWeight:600, color:T.slate600, display:"block", marginBottom:5 }}>NOTES</label>
+            <textarea value={form.notes} onChange={e => set("notes", e.target.value)} placeholder="Strategy, dependencies, anything to remember..." rows={3}
+              style={{ width:"100%", padding:"8px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.slate200}`, borderRadius:8, outline:"none", resize:"vertical", fontFamily:"inherit", boxSizing:"border-box" }} />
+          </div>
+        </div>
+        <div style={{ padding:"12px 20px", borderTop:`1px solid ${T.slate200}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:8 }}>
+          <div>
+            {isEdit && onDelete && (
+              <button onClick={() => { if (window.confirm("Delete this goal? This cannot be undone.")) onDelete(initial.id); }}
+                style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.red, background:T.redLt, border:"none", borderRadius:7, cursor:"pointer" }}>
+                Delete
+              </button>
+            )}
+          </div>
+          <div style={{ display:"flex", gap:8 }}>
+            <button onClick={onCancel} style={{ padding:"7px 14px", fontSize:11, fontWeight:600, color:T.slate600, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>Cancel</button>
+            <button onClick={() => {
+                if (!form.title.trim()) return;
+                const payload = {
+                  title:         form.title.trim(),
+                  description:   form.description.trim() || null,
+                  category:      form.category,
+                  unit:          form.unit,
+                  target_value:  form.target_value === "" ? null : Number(form.target_value),
+                  current_value: form.current_value === "" ? 0    : Number(form.current_value),
+                  target_date:   form.target_date || null,
+                  notes:         form.notes.trim() || null,
+                };
+                onSave(payload);
+              }}
+              disabled={!form.title.trim()}
+              style={{ padding:"7px 16px", fontSize:11, fontWeight:600, color:T.white, background:form.title.trim()?T.navy:"#94A3B8", border:"none", borderRadius:7, cursor:form.title.trim()?"pointer":"not-allowed" }}>
+              {isEdit ? "Save Changes" : "Create Goal"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Section: Overview ────────────────────────────────────────
 const TasksOverview = ({ tasks, goals, onComplete, onNavigate }) => {
-  const open       = tasks.filter(t => t.status !== "completed");
+  // "Open" workload = active items only — open + in_progress. Excludes completed AND cancelled.
+  const open       = tasks.filter(t => t.status === "open" || t.status === "in_progress");
   const critical   = open.filter(t => t.priority === "critical");
   const dueThisWeek= open.filter(t => daysUntil(t.due_date) <= 7);
   const overdue    = open.filter(t => isOverdue(t.due_date));
@@ -435,9 +547,10 @@ const TasksList = ({ tasks, onComplete, onNavigate, onAdd }) => {
   const [showModal,  setShowModal]  = useState(false);
 
   const filtered = useMemo(() => tasks.filter(t => {
-    if (filter === "open"        && t.status === "completed")  return false;
-    if (filter === "completed"   && t.status !== "completed")  return false;
-    if (filter === "in_progress" && t.status !== "in_progress")return false;
+    // Strict per-tab filters — cancelled tasks are hidden from all 3 tabs (Open / In Progress / Completed).
+    if (filter === "open"        && t.status !== "open")        return false;
+    if (filter === "completed"   && t.status !== "completed")   return false;
+    if (filter === "in_progress" && t.status !== "in_progress") return false;
     if (priority !== "all" && t.priority !== priority) return false;
     if (module   !== "all" && t.module   !== module)   return false;
     return true;
@@ -566,13 +679,32 @@ const GoalsSection = ({ goals }) => {
                       No notes on this goal.
                     </div>
                   )}
-                  <AskBtn size="small" context={`Goal deep dive:\nTitle: ${goal.title}\nCategory: ${goal.category}\nStatus: ${goal.status || "active"}\nTarget: ${fmt(goal.target_value,goal.unit)}\nCurrent: ${fmt(goal.current_value,goal.unit)}\nProgress: ${p}%\nDue: ${goal.target_date}${goal.notes?"\nNotes: "+goal.notes:""}\n\nHelp me build a specific action plan to hit this goal. What do I need to do this month?`} />
+                  <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                    <button onClick={(e) => { e.stopPropagation(); setEditing(goal.id); }}
+                      style={{ padding:"6px 12px", fontSize:11, fontWeight:600, color:T.navy, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>
+                      Edit Goal
+                    </button>
+                    <AskBtn size="small" context={`Goal deep dive:\nTitle: ${goal.title}\nCategory: ${goal.category}\nStatus: ${goal.status || "active"}\nTarget: ${fmt(goal.target_value,goal.unit)}\nCurrent: ${fmt(goal.current_value,goal.unit)}\nProgress: ${p}%\nDue: ${goal.target_date}${goal.notes?"\nNotes: "+goal.notes:""}\n\nHelp me build a specific action plan to hit this goal. What do I need to do this month?`} />
+                  </div>
                 </div>
               )}
             </div>
           );
         })}
       </div>
+
+      {editing && (
+        <NewGoalModal
+          initial={editingGoal}
+          onSave={(payload) => {
+            if (editing === "new") { onAdd && onAdd(payload); }
+            else                   { onUpdate && onUpdate(editing, payload); }
+            setEditing(null);
+          }}
+          onCancel={() => setEditing(null)}
+          onDelete={onDelete ? (id) => { onDelete(id); setEditing(null); } : undefined}
+        />
+      )}
     </div>
   );
 };
@@ -679,6 +811,28 @@ export default function TasksGoals({ onNavigate }) {
     setLiveTasks(rows => [data, ...(rows || [])]);
   };
 
+  // Goals CRUD — mirrors the task pattern. useSupabaseTable for goals auto-refreshes via subscription.
+  const addGoal = async (payload) => {
+    const row = { ...payload, agency_id: AGENCY_ID, status: "active", created_by: "agent" };
+    const { error } = await supabase.from("goals").insert(row);
+    if (error) console.error("addGoal failed:", error);
+  };
+  const updateGoal = async (id, payload) => {
+    const { error } = await supabase
+      .from("goals")
+      .update({ ...payload, updated_at: new Date().toISOString() })
+      .eq("id", id).eq("agency_id", AGENCY_ID);
+    if (error) console.error("updateGoal failed:", error);
+  };
+  const deleteGoal = async (id) => {
+    // Soft-delete via status='archived' so history is preserved.
+    const { error } = await supabase
+      .from("goals")
+      .update({ status: "archived", updated_at: new Date().toISOString() })
+      .eq("id", id).eq("agency_id", AGENCY_ID);
+    if (error) console.error("deleteGoal failed:", error);
+  };
+
   const sections = [
     { id:"overview",  label:"Overview"   },
     { id:"tasks",     label:"Tasks"      },
@@ -693,7 +847,7 @@ export default function TasksGoals({ onNavigate }) {
         <div>
           <div style={{ fontSize:20, fontWeight:700, color:T.slate900, letterSpacing:"-0.02em" }}>Tasks & Goals</div>
           <div style={{ fontSize:12, color:T.slate500, marginTop:3 }}>
-            {tasks.filter(t=>t.status!=="completed").length} open tasks · {goals.length} active goals · {tasks.filter(t=>t.status==="completed").length} completed this month
+            {tasks.filter(t=>t.status==="open"||t.status==="in_progress").length} open tasks · {goals.length} active goals · {tasks.filter(t=>t.status==="completed").length} completed this month
           </div>
         </div>
         <AskBtn context="Give me a complete review of my tasks and goals. What are the most critical items I should focus on today? What's at risk of falling behind? Help me build a clear action plan for this week." />
@@ -711,7 +865,7 @@ export default function TasksGoals({ onNavigate }) {
       {/* Section Content */}
       {section === "overview"  && <TasksOverview tasks={tasks} goals={goals} onComplete={completeTask} onNavigate={onNavigate||(()=>{})} />}
       {section === "tasks"     && <TasksList     tasks={tasks} onComplete={completeTask} onNavigate={onNavigate||(() =>{})} onAdd={addTask} />}
-      {section === "goals"     && <GoalsSection  goals={goals} />}
+      {section === "goals"     && <GoalsSection  goals={goals} onAdd={addGoal} onUpdate={updateGoal} onDelete={deleteGoal} />}
       {section === "completed" && <CompletedSection tasks={tasks} />}
     </div>
   );
