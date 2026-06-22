@@ -222,9 +222,20 @@ const AskBtn = ({ context, size = "normal", demoMode = false }) => {
 // ─── Section: Overview ────────────────────────────────────────
 const AutomationOverview = ({ recipes, runLog, connections }) => {
   const active    = recipes.filter(r => r.is_active).length;
-  const failed    = runLog.filter(r => r.status === "failed").length;
-  const partial   = runLog.filter(r => r.status === "partial").length;
+
+  // KPIs reflect the last 24h, not all-time. Historical pre-2026-06-13 failures
+  // (Composio auth refactor era) should not light up the dashboard today.
+  const cutoff24h = Date.now() - 24 * 60 * 60 * 1000;
+  const recent24h = (runLog || []).filter(r => {
+    const t = r.run_at ? new Date(r.run_at).getTime() : NaN;
+    return Number.isFinite(t) && t >= cutoff24h;
+  });
+  const failed    = recent24h.filter(r => r.status === "failed").length;
+  const partial   = recent24h.filter(r => r.status === "partial").length;
   const connError = connections.filter(c => c.status === "error").length;
+  const failedRecipeNames = Array.from(new Set(
+    recent24h.filter(r => r.status === "failed").map(r => r.recipe_name).filter(Boolean)
+  ));
 
   const recentRuns = runLog.slice(0, 8);
 
@@ -234,7 +245,7 @@ const AutomationOverview = ({ recipes, runLog, connections }) => {
       <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(130px,1fr))", gap:10, marginBottom:16 }}>
         {[
           { label:"Active Automations", value:active,   color:T.green,  border:T.green },
-          { label:"Failed (Recent)",    value:failed,   color:failed>0?T.red:T.green,  border:failed>0?T.red:T.green },
+          { label:"Failed (24h)",      value:failed,   color:failed>0?T.red:T.green,  border:failed>0?T.red:T.green },
           { label:"Partial Runs",       value:partial,  color:partial>0?T.amber:T.green, border:partial>0?T.amber:T.green },
           { label:"Connection Issues",  value:connError,color:connError>0?T.red:T.green, border:connError>0?T.red:T.green },
         ].map((k,i) => (
@@ -250,7 +261,13 @@ const AutomationOverview = ({ recipes, runLog, connections }) => {
         <div style={{ background:T.redLt, border:`1px solid #FECACA`, borderLeft:`4px solid ${T.red}`, borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
           <div style={{ fontSize:12, fontWeight:700, color:"#991B1B", marginBottom:4 }}>⚠️ Action Required</div>
           {connError > 0 && <div style={{ fontSize:12, color:"#991B1B", marginBottom:2 }}>• Gmail connection error — OAuth token expired. Go to Connections tab to reconnect.</div>}
-          {failed > 0 && <div style={{ fontSize:12, color:"#991B1B" }}>• Daily Briefing failed today — check Run Log for details.</div>}
+          {failed > 0 && (
+            <div style={{ fontSize:12, color:"#991B1B" }}>
+              {`• ${failed} automation run${failed === 1 ? "" : "s"} failed in the last 24h`}
+              {failedRecipeNames.length > 0 && ` (${failedRecipeNames.join(", ")})`}
+              {" — check Run Log for details."}
+            </div>
+          )}
           <div style={{ marginTop:8 }}>
             <AskBtn size="small" context="My BCC has automation failures: Gmail OAuth token expired causing Daily Briefing to fail. Help me understand what steps I need to take to reconnect Gmail in Composio and get my Daily Briefing running again." />
           </div>
