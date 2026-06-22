@@ -236,6 +236,10 @@ const AutomationOverview = ({ recipes, runLog, connections }) => {
   const failedRecipeNames = Array.from(new Set(
     recent24h.filter(r => r.status === "failed").map(r => r.recipe_name).filter(Boolean)
   ));
+  const erroredConnectors = (connections || [])
+    .filter(c => c.status === "error")
+    .map(c => c.name || c.connected_account)
+    .filter(Boolean);
 
   const recentRuns = runLog.slice(0, 8);
 
@@ -256,21 +260,27 @@ const AutomationOverview = ({ recipes, runLog, connections }) => {
         ))}
       </div>
 
-      {/* Failed/Partial Alert */}
-      {(failed > 0 || connError > 0) && (
-        <div style={{ background:T.redLt, border:`1px solid #FECACA`, borderLeft:`4px solid ${T.red}`, borderRadius:10, padding:"12px 16px", marginBottom:16 }}>
-          <div style={{ fontSize:12, fontWeight:700, color:"#991B1B", marginBottom:4 }}>⚠️ Action Required</div>
-          {connError > 0 && <div style={{ fontSize:12, color:"#991B1B", marginBottom:2 }}>• Gmail connection error — OAuth token expired. Go to Connections tab to reconnect.</div>}
-          {failed > 0 && (
-            <div style={{ fontSize:12, color:"#991B1B" }}>
-              {`• ${failed} automation run${failed === 1 ? "" : "s"} failed in the last 24h`}
-              {failedRecipeNames.length > 0 && ` (${failedRecipeNames.join(", ")})`}
-              {" — check Run Log for details."}
-            </div>
-          )}
-          <div style={{ marginTop:8 }}>
-            <AskBtn size="small" context="My BCC has automation failures: Gmail OAuth token expired causing Daily Briefing to fail. Help me understand what steps I need to take to reconnect Gmail in Composio and get my Daily Briefing running again." />
+      {/* Connection Error Alert — only fires on actual connector failure */}
+      {connError > 0 && (
+        <div style={{ background:T.redLt, border:`1px solid #FECACA`, borderLeft:`4px solid ${T.red}`, borderRadius:10, padding:"14px 18px", marginBottom:16 }}>
+          <div style={{ fontSize:13, fontWeight:700, color:"#991B1B", marginBottom:6 }}>{"⚠️ Connection Error — Action Required"}</div>
+          <div style={{ fontSize:12, color:"#991B1B", marginBottom:10, lineHeight:1.5 }}>
+            {connError === 1
+              ? `One connector is failing: ${erroredConnectors.join(", ")}. Recipes that depend on it will keep failing until it's reconnected.`
+              : `${connError} connectors are failing: ${erroredConnectors.join(", ")}. Recipes that depend on them will keep failing until they're reconnected.`}
           </div>
+          <div style={{ fontSize:12, fontWeight:600, color:"#991B1B", marginBottom:4 }}>How to fix this with Claude:</div>
+          <ol style={{ fontSize:12, color:"#991B1B", lineHeight:1.7, margin:"0 0 10px 18px", padding:0 }}>
+            <li>Click <strong>Ask Claude</strong> below (or open a new Claude chat).</li>
+            <li>Paste the connector name(s) shown above, and the most recent error message from the Run Log if you have it.</li>
+            <li>Claude will identify the layer that broke (Composio dashboard auth vs Supabase setting) and give you the exact reconnect link.</li>
+            <li>Click the link, complete the OAuth flow in Composio, return to Claude.</li>
+            <li>Claude will fire a test run of the affected recipe and confirm the fix held.</li>
+          </ol>
+          <AskBtn
+            size="small"
+            context={`A Composio connector on my BCC is showing connection_error status. Affected connector(s): ${erroredConnectors.join(", ") || "see Connections tab"}. Walk me through reconnecting it step by step: identify which layer broke (Claude.ai connectors panel vs Composio dashboard), give me the exact reauthorization link to click, then verify the fix by running the affected recipe and reading the run log result.`}
+          />
         </div>
       )}
 
