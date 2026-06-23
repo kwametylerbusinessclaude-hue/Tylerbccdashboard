@@ -103,12 +103,18 @@ function useProducerROI() {
         const compRecaps = compRes.data || [];
 
         // Lapse rate from comp_recap: prior-year vs current-year auto+fire YTD renewals
-        const isPC = (cat) => {
+        // P&C comp_type values in this DB are MUTL/FIRE/STDAUTO (auto+fire+std auto bucket).
+        // Renewal/servicing vs new business is encoded in comp_category, not comp_type.
+        const isPCType = (t) => {
+          const c = (t || "").toUpperCase();
+          return c === "MUTL" || c === "FIRE" || c === "STDAUTO";
+        };
+        const isRenewalCategory = (cat) => {
           const c = (cat || "").toLowerCase();
-          return c.includes("auto") || c.includes("home") || c.includes("fire") || c.includes("umbrella");
+          return c.includes("renewal") || c.includes("servicing");
         };
         const renewalsYtd = (year) => compRecaps
-          .filter(r => r.period_year === year && r.comp_type === "renewal" && isPC(r.comp_category) && r.period_month <= currentMonth)
+          .filter(r => r.period_year === year && isPCType(r.comp_type) && isRenewalCategory(r.comp_category) && r.period_month <= currentMonth)
           .reduce((s,r) => s + parseFloat(r.amount || 0), 0);
 
         const priorRenewals = renewalsYtd(currentYear - 1);
@@ -135,8 +141,11 @@ function useProducerROI() {
           monthlyGrossByStaff[sid] = (total / runs) * 2;
         }
 
-        const smvc = parseFloat(agency.smvc_rate_pc) || 10;
-        const blended = parseFloat(agency.blended_rate_other) || 9;
+        // Defaults aligned to this agency's working values (operational_rule 2026-06-16);
+        // if agency.smvc_rate_pc / blended_rate_other ever clears to null, fall through here
+        // rather than rendering a confusing $0 projection or an inflated 10%.
+        const smvc = parseFloat(agency.smvc_rate_pc) > 0 ? parseFloat(agency.smvc_rate_pc) : 9;
+        const blended = parseFloat(agency.blended_rate_other) > 0 ? parseFloat(agency.blended_rate_other) : 9;
 
         // Group production by staff/year/month
         // LOB classification:
