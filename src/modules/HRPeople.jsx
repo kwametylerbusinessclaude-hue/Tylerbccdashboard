@@ -139,11 +139,33 @@ function useProducerROI() {
         const blended = parseFloat(agency.blended_rate_other) || 9;
 
         // Group production by staff/year/month
+        // LOB classification:
+        // - Case-insensitive substring match (real values look like "Auto - Renewal", "Fire - New", "Life - First Year")
+        // - P&C bucket: auto, fire, home/homeowners, umbrella, condo, dwelling, renters, std auto
+        // - Skip aggregate rows ("Production Report - Total Issued" double-counts)
+        // - Skip renewal/servicing rows for NEW BUSINESS commission projection (those are old cohorts)
+        const PC_KEYWORDS = ["auto", "fire", "home", "umbrella", "condo", "dwelling", "renter"];
+        const isPCLob = (lob) => {
+          const l = (lob || "").toLowerCase();
+          return PC_KEYWORDS.some(kw => l.includes(kw));
+        };
+        const isNewBusiness = (lob) => {
+          const l = (lob || "").toLowerCase();
+          // Treat "First Year" and "New" as new business; exclude "Renewal" and "Servicing"
+          if (l.includes("renewal") || l.includes("servicing")) return false;
+          return l.includes("new") || l.includes("first year");
+        };
+        const isAggregateRow = (lob) => {
+          const l = (lob || "").toLowerCase();
+          return l.includes("total issued") || l.includes("production report");
+        };
         const prodByKey = {};
         for (const p of production) {
+          if (isAggregateRow(p.line_of_business)) continue;   // skip total-issued aggregator
+          if (!isNewBusiness(p.line_of_business)) continue;   // new business only for SMVC projection
           const k = `${p.staff_id}|${p.period_year}|${p.period_month}`;
           if (!prodByKey[k]) prodByKey[k] = { pc_premium: 0, other_premium: 0, policies: 0 };
-          if (p.line_of_business === "auto" || p.line_of_business === "fire") {
+          if (isPCLob(p.line_of_business)) {
             prodByKey[k].pc_premium += parseFloat(p.premium_issued || 0);
           } else {
             prodByKey[k].other_premium += parseFloat(p.premium_issued || 0);
@@ -151,7 +173,8 @@ function useProducerROI() {
           prodByKey[k].policies += parseInt(p.policies_issued || 0, 10);
         }
 
-        // Producers only (LSPs, Producers, FSS)
+        // Producers only (LSPs, Producers, FSS) — include both W-2 and 1099 employment types
+        // staff.is_active filter already applied above when building `staff` array
         const producers = staff.filter(s => {
           const r = (s.role || "").toLowerCase();
           return r.includes("lsp") || r.includes("producer") || r.includes("financial services");
