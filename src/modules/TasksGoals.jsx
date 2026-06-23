@@ -496,7 +496,7 @@ const TasksOverview = ({ tasks, goals, onComplete, onNavigate }) => {
                     {mod.icon} {mod.label} · {days===0?"Due today":days===1?"Due tomorrow":`${days} days`}
                   </div>
                 </div>
-                <button onClick={() => onComplete(task.id)} style={{ fontSize:9, color:T.green, background:T.greenLt, border:"none", borderRadius:5, padding:"3px 7px", cursor:"pointer", flexShrink:0, fontWeight:600 }}>Done</button>
+                <button onClick={() => onComplete(task.id)} title="Mark this task complete" style={{ fontSize:10, color:T.green, background:T.greenLt, border:`1px solid ${T.green}33`, borderRadius:6, padding:"4px 9px", cursor:"pointer", flexShrink:0, fontWeight:600, whiteSpace:"nowrap" }}>✓ Mark Done</button>
               </div>
             );
           })}
