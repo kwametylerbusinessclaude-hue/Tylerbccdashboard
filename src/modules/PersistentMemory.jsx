@@ -214,9 +214,19 @@ const MemoryCard = ({ item, categoryConfig, onEdit }) => {
 
 // ─── Edit Modal ───────────────────────────────────────────────
 const EditModal = ({ item, categories, onSave, onCancel, onDelete, saving }) => {
+  // NOTE: useState(item?.X) captures the prop value at first mount only. When the
+  // modal stays mounted and item changes (e.g. switching from Edit row A to Edit
+  // row B without unmounting), local state stays stuck on row A. Sync on item.id
+  // changes. Same fix shape as Settings BCCConfiguration (commit f361d977) and
+  // Settings FieldRow (commit 7e8aa8fc). Operational rule: af0b0215.
   const [title, setTitle] = useState(item?.title || "");
   const [content, setContent] = useState(item?.content || "");
   const [category, setCategory] = useState(item?.category || "business_rules");
+  useEffect(() => {
+    setTitle(item?.title || "");
+    setContent(item?.content || "");
+    setCategory(item?.category || "business_rules");
+  }, [item?.id]);
   const isNew = !item?.id;
 
   return (
