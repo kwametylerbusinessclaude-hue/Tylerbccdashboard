@@ -384,6 +384,9 @@ const ConnectedAccounts = ({ connections }) => (
 // ─── Section: BCC Configuration ──────────────────────────────
 const BCCConfiguration = ({ config }) => {
   const [cfg, setCfg] = useState(config);
+  // Sync local state from the live config prop when settingsData arrives or refreshes.
+  // See operational_rule af0b0215 (2026-06-24): useState(propValue) anti-pattern.
+  useEffect(() => { setCfg(config); }, [config]);
   const set = (k,v) => setCfg(c => ({...c,[k]:v}));
 
   return (
@@ -843,38 +846,64 @@ export default function Settings() {
     composio_canva_auth_config_id:          { platform: "Canva",           icon: "🎨" },
     composio_telegram_auth_config_id:       { platform: "Telegram",        icon: "📨" },
   };
+  const formatSyncDate = (iso) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  };
   const connections = useMemo(() => {
     const out = [];
     for (const row of (settingsData || [])) {
       const meta = PLATFORM_FROM_KEY[row.setting_key];
       if (!meta) continue;
+      const bound = !!row.setting_value;
       out.push({
         id: row.setting_key,
         platform: meta.platform,
         icon: meta.icon,
-        status: row.setting_value ? "configured" : "missing",
-        account: row.setting_value ? row.setting_value : "(not bound)",
-        last_sync: row.updated_at || "—",
-        note: row.setting_value ? "Binding present" : "No auth_config_id stored",
+        status: bound ? "healthy" : "error",
+        account: bound ? row.setting_value : "(not bound)",
+        last_sync: formatSyncDate(row.updated_at),
+        note: bound ? "Binding present" : "Reconnect required in Composio",
       });
     }
     return out;
   }, [settingsData]);
 
   // Derive a config view from agencyData + select settingsData keys.
+  // All keys here MUST match actual setting_key values in the settings table.
   const config = useMemo(() => {
     const get = (k) => (settingsData || []).find(r => r.setting_key === k)?.setting_value || null;
+
+    // accounting_method DB value is "cash" — map to display label
+    const acctRaw = get("accounting_method");
+    const acctDisplay = acctRaw === "cash" ? "Cash Basis"
+                      : acctRaw === "accrual" ? "Accrual Basis"
+                      : (acctRaw || "Cash Basis");
+
+    // fiscal_year_start DB value is "MM-DD" like "01-01" — format to "Month D"
+    const fysRaw = get("fiscal_year_start");
+    let fysDisplay = "January 1";
+    if (fysRaw && /^\d{2}-\d{2}$/.test(fysRaw)) {
+      const [mm, dd] = fysRaw.split("-").map(Number);
+      const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+      if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+        fysDisplay = `${monthNames[mm-1]} ${dd}`;
+      }
+    }
+
     return {
-      timezone:          get("agency_timezone") || "America/Chicago",
-      fiscal_year_start: agencyData?.fiscal_year_start || "January 1",
-      accounting_method: "Cash Basis",
-      currency:          "USD",
-      briefing_time:     get("daily_briefing_time") || "6:00 AM",
-      briefing_email:    get("owner_email") || agencyData?.primary_email || "—",
-      briefing_enabled:  true,
+      timezone:          get("agency_timezone")           || "America/Chicago",
+      fiscal_year_start: fysDisplay,
+      accounting_method: acctDisplay,
+      currency:          get("currency")                  || "USD",
+      briefing_time:     get("briefing_time")             || "06:00",
+      briefing_email:    get("briefing_email")            || agencyData?.primary_email || "—",
+      briefing_enabled:  (get("briefing_enabled") || "true") === "true",
       aipp_target:       null,
-      aipp_year:         new Date().getFullYear(),
-      dashboard_period:  "mtd",
+      aipp_year:         parseInt(get("aipp_program_year"), 10) || new Date().getFullYear(),
+      dashboard_period:  get("dashboard_revenue_period")   || "mtd",
     };
   }, [agencyData, settingsData]);
 
