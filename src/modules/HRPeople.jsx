@@ -574,9 +574,165 @@ const RecruitingPipeline = ({ applicants, onUpdate }) => {
   );
 };
 
+// ─── Section: Edit Staff Modal ───────────────────────────────
+// Used by StaffDirectory to let the owner update a staff member's role,
+// contact info, pay, dates, notes, and active status. first_name/last_name
+// are intentionally NOT exposed here — identity changes go through a
+// different workflow because they cascade to other tables.
+const EditStaffModal = ({ member, onClose, onSaved }) => {
+  const [form, setForm] = useState({
+    role:            member.role            || "",
+    employment_type: member.employment_type || "w2",
+    email:           member.email           || "",
+    phone:           member.phone           || "",
+    pay_type:        member.pay_type        || "",
+    pay_rate:        member.pay_rate ?? "",
+    start_date:      member.start_date      || "",
+    end_date:        member.end_date        || "",
+    notes:           member.notes           || "",
+    is_active:       member.is_active !== false,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError]   = useState(null);
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const handleSave = async (e) => {
+    if (e && e.preventDefault) e.preventDefault();
+    setSaving(true);
+    setError(null);
+    try {
+      const payload = {
+        role:            form.role.trim() || null,
+        employment_type: form.employment_type || null,
+        email:           form.email.trim() || null,
+        phone:           form.phone.trim() || null,
+        pay_type:        form.pay_type || null,
+        pay_rate:        form.pay_rate === "" ? null : Number(form.pay_rate),
+        start_date:      form.start_date || null,
+        end_date:        form.end_date   || null,
+        notes:           form.notes.trim() || null,
+        is_active:       !!form.is_active,
+        updated_at:      new Date().toISOString(),
+      };
+      if (payload.pay_rate !== null && !Number.isFinite(payload.pay_rate)) {
+        throw new Error("Pay rate must be a number");
+      }
+      const { data, error: err } = await supabase
+        .from("staff")
+        .update(payload)
+        .eq("id", member.id)
+        .eq("agency_id", AGENCY_ID)
+        .select()
+        .single();
+      if (err) throw err;
+      onSaved && onSaved(data);
+      onClose && onClose();
+    } catch (err) {
+      setError(err.message || "Save failed");
+      setSaving(false);
+    }
+  };
+
+  const FieldLabel = ({ children }) => (
+    <div style={{ fontSize:10, fontWeight:600, color:T.slate500, marginBottom:4, textTransform:"uppercase", letterSpacing:0.4 }}>{children}</div>
+  );
+  const inputStyle = { width:"100%", padding:"8px 10px", border:`1px solid ${T.slate200}`, borderRadius:6, fontSize:13, color:T.slate800, background:T.white, boxSizing:"border-box" };
+
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(15, 23, 42, 0.55)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:50, padding:16 }} onClick={onClose}>
+      <div style={{ background:T.white, borderRadius:14, padding:24, maxWidth:560, width:"100%", maxHeight:"90vh", overflowY:"auto", boxShadow:"0 12px 32px rgba(0,0,0,0.18)" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+          <div>
+            <div style={{ fontSize:16, fontWeight:700, color:T.slate900 }}>Edit {member.first_name} {member.last_name}</div>
+            <div style={{ fontSize:11, color:T.slate500, marginTop:2 }}>Identity (name) is intentionally not editable here.</div>
+          </div>
+          <button onClick={onClose} aria-label="Close" style={{ background:"none", border:"none", fontSize:20, color:T.slate400, cursor:"pointer", lineHeight:1 }}>×</button>
+        </div>
+
+        {error && (
+          <div style={{ background:T.redLt, color:"#991B1B", padding:"10px 12px", borderRadius:8, fontSize:12, marginBottom:14 }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+          <div style={{ gridColumn:"1 / -1" }}>
+            <FieldLabel>Role / Title</FieldLabel>
+            <input style={inputStyle} value={form.role} onChange={e => set("role", e.target.value)} placeholder="e.g. Producer, Producer-Servicing, CSR" />
+          </div>
+
+          <div>
+            <FieldLabel>Employment Type</FieldLabel>
+            <select style={inputStyle} value={form.employment_type} onChange={e => set("employment_type", e.target.value)}>
+              <option value="w2">W-2 Employee</option>
+              <option value="owner_w2">Owner W-2 (S-Corp)</option>
+              <option value="family">Family Employee (W-2)</option>
+              <option value="1099">1099 Contractor</option>
+              <option value="apprentice">Apprentice</option>
+            </select>
+          </div>
+
+          <div>
+            <FieldLabel>Active?</FieldLabel>
+            <label style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 10px", border:`1px solid ${T.slate200}`, borderRadius:6, background:T.white, fontSize:13, color:T.slate800, cursor:"pointer" }}>
+              <input type="checkbox" checked={form.is_active} onChange={e => set("is_active", e.target.checked)} />
+              {form.is_active ? "Currently on team" : "No longer on team"}
+            </label>
+          </div>
+
+          <div>
+            <FieldLabel>Email</FieldLabel>
+            <input style={inputStyle} value={form.email} onChange={e => set("email", e.target.value)} placeholder="name@example.com" />
+          </div>
+          <div>
+            <FieldLabel>Phone</FieldLabel>
+            <input style={inputStyle} value={form.phone} onChange={e => set("phone", e.target.value)} placeholder="555-555-5555" />
+          </div>
+
+          <div>
+            <FieldLabel>Pay Type</FieldLabel>
+            <select style={inputStyle} value={form.pay_type} onChange={e => set("pay_type", e.target.value)}>
+              <option value="">— not set —</option>
+              <option value="hourly">Hourly</option>
+              <option value="monthly_base">Monthly base</option>
+              <option value="salary">Annual salary</option>
+              <option value="commission_only">Commission only</option>
+            </select>
+          </div>
+          <div>
+            <FieldLabel>Pay Rate</FieldLabel>
+            <input style={inputStyle} type="number" step="0.01" value={form.pay_rate} onChange={e => set("pay_rate", e.target.value)} placeholder="e.g. 18 or 3000" />
+          </div>
+
+          <div>
+            <FieldLabel>Start Date</FieldLabel>
+            <input style={inputStyle} type="date" value={form.start_date} onChange={e => set("start_date", e.target.value)} />
+          </div>
+          <div>
+            <FieldLabel>End Date (optional)</FieldLabel>
+            <input style={inputStyle} type="date" value={form.end_date} onChange={e => set("end_date", e.target.value)} />
+          </div>
+
+          <div style={{ gridColumn:"1 / -1" }}>
+            <FieldLabel>Notes</FieldLabel>
+            <textarea style={{ ...inputStyle, minHeight:84, resize:"vertical", fontFamily:"inherit" }} value={form.notes} onChange={e => set("notes", e.target.value)} placeholder="Anything the BCC should know about this person" />
+          </div>
+        </div>
+
+        <div style={{ display:"flex", justifyContent:"flex-end", gap:8, marginTop:18 }}>
+          <button onClick={onClose} disabled={saving} style={{ padding:"9px 16px", borderRadius:8, border:`1px solid ${T.slate200}`, background:T.white, color:T.slate700, fontSize:13, fontWeight:600, cursor:saving?"not-allowed":"pointer" }}>Cancel</button>
+          <button onClick={handleSave} disabled={saving} style={{ padding:"9px 18px", borderRadius:8, border:"none", background:saving?T.slate400:T.blue, color:T.white, fontSize:13, fontWeight:700, cursor:saving?"not-allowed":"pointer" }}>{saving ? "Saving…" : "Save changes"}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Section: Staff Directory ─────────────────────────────────
-const StaffDirectory = ({ staff }) => {
+const StaffDirectory = ({ staff, onUpdated }) => {
   const [expanded, setExpanded] = useState(null);
+  const [editing,  setEditing]  = useState(null);  // staff member object currently being edited
 
   return (
     <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
@@ -645,12 +801,27 @@ const StaffDirectory = ({ staff }) => {
                     ⚠ {member.compliance_flag}
                   </div>
                 )}
-                <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name} ${member.last_name}\nRole: ${member.role}\nEmployment: ${member.employment_type}\nPay: ${member.pay_rate == null ? "rate not set" : (member.pay_type==="hourly" ? ("$"+member.pay_rate+"/hr") : ("$"+Number(member.pay_rate).toLocaleString()+"/yr"))}\nLicensed: ${member.licensed?"Yes — "+(Array.isArray(member.license_states)?member.license_states.join(", "):"(states not on file)"):"No"}\nStart: ${member.start_date}\nNotes: ${member.notes}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
+                <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setEditing(member); }}
+                    style={{ padding:"7px 14px", borderRadius:6, border:`1px solid ${T.blue}`, background:T.white, color:T.blue, fontSize:11, fontWeight:700, cursor:"pointer", letterSpacing:0.2 }}
+                  >
+                    ✏ Edit
+                  </button>
+                  <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name} ${member.last_name}\nRole: ${member.role}\nEmployment: ${member.employment_type}\nPay: ${member.pay_rate == null ? "rate not set" : (member.pay_type==="hourly" ? ("$"+member.pay_rate+"/hr") : ("$"+Number(member.pay_rate).toLocaleString()+"/yr"))}\nLicensed: ${member.licensed?"Yes — "+(Array.isArray(member.license_states)?member.license_states.join(", "):"(states not on file)"):"No"}\nStart: ${member.start_date}\nNotes: ${member.notes}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
+                </div>
               </div>
             )}
           </Card>
         );
       })}
+      {editing && (
+        <EditStaffModal
+          member={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(updated) => { onUpdated && onUpdated(updated); }}
+        />
+      )}
     </div>
   );
 };
@@ -1174,7 +1345,7 @@ export default function HRPeople() {
   const { data: applicants = [], setData: setApplicants } = useSupabaseTable(
     "applicants", AGENCY_ID, { orderBy: "created_at", ascending: false }
   );
-  const { data: staff = [] } = useSupabaseTable(
+  const { data: staff = [], setData: setStaff } = useSupabaseTable(
     "staff", AGENCY_ID, { orderBy: "created_at", ascending: true }
   );
   const { data: onboarding = [] } = useSupabaseTable(
@@ -1232,7 +1403,7 @@ export default function HRPeople() {
       {/* Section Content */}
       {section === "overview"    && <HROverview        applicants={applicants} staff={staff} onboarding={onboarding} />}
       {section === "recruiting"  && <RecruitingPipeline applicants={applicants} onUpdate={updateApplicantStage} />}
-      {section === "staff"       && <StaffDirectory     staff={staff} />}
+      {section === "staff"       && <StaffDirectory     staff={staff} onUpdated={(updated) => setStaff(prev => prev.map(s => s.id === updated.id ? { ...s, ...updated } : s))} />}
       {section === "onboarding"  && <OnboardingSection  onboarding={onboarding} />}
       {section === "performance" && <PerformanceSection  roi={roi} />}
       {section === "commissions" && <CommissionsSection  commissions={commissions} />}
