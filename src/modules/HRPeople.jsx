@@ -448,7 +448,7 @@ const HROverview = ({ applicants, staff, onboarding }) => {
               </div>
               <div style={{ flex:1 }}>
                 <div style={{ fontSize:12, fontWeight:600, color:T.slate800 }}>{member.first_name} {member.last_name}</div>
-                <div style={{ fontSize:10, color:T.slate500 }}>{member.role} · {member.employment_type.toUpperCase()}</div>
+                <div style={{ fontSize:10, color:T.slate500 }}>{member.role} · {(member.employment_type || "—").toString().toUpperCase()}</div>
               </div>
               <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3 }}>
                 {member.licensed
@@ -1087,9 +1087,33 @@ const ProducerROICard = ({ producer, smvcRate, blendedRate, lapseRate }) => {
 
 
 // ─── Section: Commissions ─────────────────────────────────────
-const CommissionsSection = ({ commissions }) => (
+const CommissionsSection = ({ commissions }) => {
+  // NOTE: This JSX expects each commission row shaped as
+  //   { staff_name, structure_name, effective_date, this_month, ytd_earned, tiers: [...],
+  //     qualifying_products: [...], notes }
+  // but the live commission_structures table is flat
+  //   { staff_id, structure_name, effective_date, commission_type, rate, cap, qualifying_products, notes, is_active }.
+  // Until the data layer joins staff_name + derives this_month/ytd_earned/tiers,
+  // we filter to rows that present the hierarchical shape so the tab cannot crash on
+  // c.this_month.toLocaleString() or c.tiers.map(...).
+  // Tracked for full rewrite: same task as OnboardingSection refactor.
+  const hierarchical = (commissions || []).filter(c =>
+    c?.this_month != null && c?.ytd_earned != null && Array.isArray(c?.tiers)
+  );
+  if (hierarchical.length === 0) {
+    return (
+      <Card>
+        <div style={{ padding:"20px 0", textAlign:"center", fontSize:13, color:T.slate500 }}>
+          Commission structures are stored flat in the database
+          ({(commissions || []).length} active rows). The derived month/YTD/tier
+          view is pending a data-normalization pass.
+        </div>
+      </Card>
+    );
+  }
+  return (
   <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-    {commissions.map(c => (
+    {hierarchical.map(c => (
       <Card key={c.id}>
         <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:14 }}>
           <div>
@@ -1138,7 +1162,8 @@ const CommissionsSection = ({ commissions }) => (
       </Card>
     ))}
   </div>
-);
+  );
+};
 
 // ─── Main HR Module ───────────────────────────────────────────
 export default function HRPeople() {
