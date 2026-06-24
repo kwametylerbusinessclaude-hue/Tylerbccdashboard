@@ -1050,64 +1050,85 @@ const GLSection = ({ data }) => (
 
 // ─── Main Financials Module ───────────────────────────────────
 // ============================================================
-// FULL FINANCIAL REPORT — Item 1 (Kwame request 2026-06-24)
-// Print button generates a 4-comparison printable report:
-//   1. MoM vs PY same month
-//   2. YTD vs PY same period
-//   3. Quarter vs PY same quarter
-//   4. QTD vs PY same period
-// Reads from v_income_statement (unified pre+post cutover view).
+// FULL FINANCIAL REPORT — Item 1 (Kwame request 2026-06-24, v2 comprehensive)
+// Print button generates a printable Full Financial Report:
+//   - Cover + Executive KPI snapshot (Month / Quarter / YTD)
+//   - Unified P&L with 6-column layout (M / M-PY / Q / Q-PY / YTD / YTD-PY)
+//   - SF COMP_RECAP YTD summary by comp_type
+//   - Payroll YTD summary + recent pay runs
+//   - AIPP & ScoreBoard annual progress
+// Reads from v_income_statement (unified pre+post cutover), comp_recap,
+// payroll_runs, aipp_tracking, agency, settings.
+// Landscape Letter for readable multi-period columns.
 // ============================================================
 
-// Return YYYY-MM-DD for first/last of month for a given Date.
+// ── Date range helpers ───────────────────────────────────────
 function monthRange(year, month /* 1-12 */) {
   const start = new Date(Date.UTC(year, month - 1, 1));
   const end = new Date(Date.UTC(year, month, 0));
   const iso = (d) => d.toISOString().slice(0, 10);
   return { start: iso(start), end: iso(end) };
 }
-
-// Return YYYY-MM-DD for first-of-quarter / last-of-period through month for a given year/month.
-function quarterRange(year, month /* 1-12 */, throughMonth /* 1-12 */) {
-  const qStart = Math.floor((month - 1) / 3) * 3 + 1;
-  const start = new Date(Date.UTC(year, qStart - 1, 1));
-  const end = new Date(Date.UTC(year, throughMonth, 0));
-  const iso = (d) => d.toISOString().slice(0, 10);
-  return { start: iso(start), end: iso(end) };
-}
-
 function ytdRange(year, throughMonth /* 1-12 */) {
   const start = new Date(Date.UTC(year, 0, 1));
   const end = new Date(Date.UTC(year, throughMonth, 0));
   const iso = (d) => d.toISOString().slice(0, 10);
   return { start: iso(start), end: iso(end) };
 }
+function quarterThroughRange(year, month /* 1-12 */) {
+  const qStart = Math.floor((month - 1) / 3) * 3 + 1;
+  const start = new Date(Date.UTC(year, qStart - 1, 1));
+  const end = new Date(Date.UTC(year, month, 0));
+  const iso = (d) => d.toISOString().slice(0, 10);
+  return { start: iso(start), end: iso(end) };
+}
 
 const MONTH_LABEL = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-// Pull two years of income statement rows + agency name. Returns { rows, agencyName, cutover }.
+// ── Data fetch ───────────────────────────────────────────────
 async function fetchReportSource(asOfDate) {
   const asOf = asOfDate instanceof Date ? asOfDate : new Date(asOfDate);
   const currentYear = asOf.getUTCFullYear();
   const startISO = `${currentYear - 1}-01-01`;
   const endISO = asOf.toISOString().slice(0, 10);
 
-  const [{ data: rows = [] } = { data: [] }, { data: agency = [] } = { data: [] }, { data: settings = [] } = { data: [] }] = await Promise.all([
+  const [isRes, agencyRes, settingsRes, compRes, runsRes, aippRes] = await Promise.all([
     supabase.from("v_income_statement")
       .select("year, month, period_date, account_id, account_code, account_name, account_type, account_subtype, amount")
-      .gte("period_date", startISO)
-      .lte("period_date", endISO)
+      .gte("period_date", startISO).lte("period_date", endISO)
       .order("period_date", { ascending: true }),
     supabase.from("agency").select("name").limit(1),
     supabase.from("settings").select("setting_key, setting_value").in("setting_key", ["gl_cutover_date"]),
+    supabase.from("comp_recap")
+      .select("period_year, period_month, comp_type, comp_category, description, amount, is_aipp_eligible, is_scoreboard_eligible")
+      .eq("amount_type", "half_month_activity")
+      .gte("period_year", currentYear - 1)
+      .order("period_year", { ascending: false })
+      .order("period_month", { ascending: false })
+      .limit(3000),
+    supabase.from("payroll_runs")
+      .select("pay_period_start, pay_period_end, pay_date, gross_payroll, employer_taxes, net_payroll, status, payroll_provider, is_synthesized")
+      .order("pay_date", { ascending: false })
+      .limit(60),
+    supabase.from("aipp_tracking")
+      .select("program_year, target_amount, earned_ytd, projected_full_year, achievement_percentage, notes")
+      .order("program_year", { ascending: false })
+      .limit(3),
   ]);
 
-  const agencyName = (agency && agency[0] && agency[0].name) || "Tyler Insurance and Financial Services LLC";
-  const cutover = ((settings || []).find((s) => s.setting_key === "gl_cutover_date") || {}).setting_value || "2026-04-30";
-  return { rows: rows || [], agencyName, cutover };
+  return {
+    rows: (isRes && isRes.data) || [],
+    agencyName: (agencyRes && agencyRes.data && agencyRes.data[0] && agencyRes.data[0].name) || "Tyler Insurance and Financial Services LLC",
+    cutover: ((settingsRes && settingsRes.data) || []).find((s) => s.setting_key === "gl_cutover_date") ?
+      ((settingsRes.data.find((s) => s.setting_key === "gl_cutover_date")) || {}).setting_value || "2026-04-30" :
+      "2026-04-30",
+    compRows: (compRes && compRes.data) || [],
+    payrollRuns: (runsRes && runsRes.data) || [],
+    aippRows: (aippRes && aippRes.data) || [],
+  };
 }
 
-// Aggregate rows for an inclusive [startISO, endISO] window into {byAccount, totals}.
+// ── P&L aggregator ───────────────────────────────────────────
 function aggregateWindow(rows, startISO, endISO) {
   const byAccount = new Map();
   let totalIncome = 0;
@@ -1132,124 +1153,140 @@ function aggregateWindow(rows, startISO, endISO) {
   }
   return {
     byAccount: Array.from(byAccount.values()),
-    totalIncome,
-    totalExpense,
+    totalIncome, totalExpense,
     netIncome: totalIncome - totalExpense,
   };
 }
 
-// Build one comparison view: current window vs prior window.
-function buildComparison(label, rows, currISO, priorISO, lineageNote = "") {
-  const curr = aggregateWindow(rows, currISO.start, currISO.end);
-  const prior = aggregateWindow(rows, priorISO.start, priorISO.end);
-
-  // Union account list across both periods, group by account_type then subtype.
-  const allKeys = new Map();
-  for (const a of curr.byAccount) allKeys.set(a.account_id || a.account_code, a);
-  for (const a of prior.byAccount) {
-    const k = a.account_id || a.account_code;
-    if (!allKeys.has(k)) allKeys.set(k, { ...a, amount: 0 });
-  }
-
-  const accounts = Array.from(allKeys.values()).map((meta) => {
-    const c = curr.byAccount.find((x) => (x.account_id || x.account_code) === (meta.account_id || meta.account_code));
-    const p = prior.byAccount.find((x) => (x.account_id || x.account_code) === (meta.account_id || meta.account_code));
-    const cAmt = c ? c.amount : 0;
-    const pAmt = p ? p.amount : 0;
-    return {
-      code: meta.account_code,
-      name: meta.account_name,
-      type: meta.account_type,
-      subtype: meta.account_subtype || "other",
-      curr: cAmt,
-      prior: pAmt,
-      delta: cAmt - pAmt,
-      pctDelta: pAmt !== 0 ? ((cAmt - pAmt) / Math.abs(pAmt)) * 100 : null,
-    };
-  });
-
-  // Sort: income first (by code asc), then expense (by code asc)
-  accounts.sort((a, b) => {
-    if (a.type !== b.type) return a.type === "income" ? -1 : 1;
-    return (a.code || "").localeCompare(b.code || "");
-  });
-
-  return {
-    label,
-    lineageNote,
-    currLabel: `${currISO.start} to ${currISO.end}`,
-    priorLabel: `${priorISO.start} to ${priorISO.end}`,
-    accounts,
-    totals: {
-      currIncome: curr.totalIncome,
-      priorIncome: prior.totalIncome,
-      currExpense: curr.totalExpense,
-      priorExpense: prior.totalExpense,
-      currNet: curr.netIncome,
-      priorNet: prior.netIncome,
-      deltaIncome: curr.totalIncome - prior.totalIncome,
-      deltaExpense: curr.totalExpense - prior.totalExpense,
-      deltaNet: curr.netIncome - prior.netIncome,
-    },
-  };
-}
-
-// buildFullReport(asOfDate) — returns { asOfDate, agencyName, comparisons[4] }
+// ── Build full comprehensive report ──────────────────────────
 async function buildFullReport(asOfDate) {
   const asOf = asOfDate instanceof Date ? asOfDate : new Date(asOfDate);
   const y = asOf.getUTCFullYear();
   const m = asOf.getUTCMonth() + 1;
-  const { rows, agencyName, cutover } = await fetchReportSource(asOf);
+  const qNum = Math.ceil(m / 3);
 
-  const cutoverDate = cutover; // YYYY-MM-DD
+  const src = await fetchReportSource(asOf);
 
-  const comparisons = [
-    buildComparison(
-      `Month: ${MONTH_LABEL[m - 1]} ${y} vs ${MONTH_LABEL[m - 1]} ${y - 1}`,
-      rows,
-      monthRange(y, m),
-      monthRange(y - 1, m),
-      `Current month posted via live BCC GL (post-cutover ${cutoverDate}). Prior year same month is CPA-prepared monthly P&L (pre-cutover).`
-    ),
-    buildComparison(
-      `YTD: Jan-${MONTH_LABEL[m - 1]} ${y} vs Jan-${MONTH_LABEL[m - 1]} ${y - 1}`,
-      rows,
-      ytdRange(y, m),
-      ytdRange(y - 1, m),
-      `YTD blends CPA pre-cutover data (through ${cutoverDate}) with live BCC GL postings (post-cutover). Prior year is CPA-prepared throughout.`
-    ),
-    (function quarterCmp() {
-      const qNum = Math.ceil(m / 3);
-      const qStart = (qNum - 1) * 3 + 1;
-      const qEnd = qNum * 3;
-      return buildComparison(
-        `Quarter: Q${qNum} ${y} vs Q${qNum} ${y - 1}`,
-        rows,
-        { start: monthRange(y, qStart).start, end: monthRange(y, qEnd).end },
-        { start: monthRange(y - 1, qStart).start, end: monthRange(y - 1, qEnd).end },
-        `Full-quarter comparison. Current Q${qNum} ${y} may include partially-closed months.`
-      );
-    })(),
-    buildComparison(
-      `QTD: Q${Math.ceil(m / 3)}-to-date ${y} vs same window ${y - 1}`,
-      rows,
-      quarterRange(y, m, m),
-      quarterRange(y - 1, m, m),
-      `Quarter-to-date through ${MONTH_LABEL[m - 1]}. Apples-to-apples month window vs prior year.`
-    ),
-  ];
+  // Period windows
+  const monthCurr = monthRange(y, m);
+  const monthPrior = monthRange(y - 1, m);
+  const qCurr = quarterThroughRange(y, m);
+  const qPrior = quarterThroughRange(y - 1, m);
+  const ytdCurr = ytdRange(y, m);
+  const ytdPrior = ytdRange(y - 1, m);
+
+  const aggMonth = aggregateWindow(src.rows, monthCurr.start, monthCurr.end);
+  const aggMonthPY = aggregateWindow(src.rows, monthPrior.start, monthPrior.end);
+  const aggQuarter = aggregateWindow(src.rows, qCurr.start, qCurr.end);
+  const aggQuarterPY = aggregateWindow(src.rows, qPrior.start, qPrior.end);
+  const aggYtd = aggregateWindow(src.rows, ytdCurr.start, ytdCurr.end);
+  const aggYtdPY = aggregateWindow(src.rows, ytdPrior.start, ytdPrior.end);
+
+  // KPI summary
+  const kpis = {
+    month: { label: `${MONTH_LABEL[m - 1]} ${y}`, range: `${monthCurr.start} to ${monthCurr.end}`,
+      revenue: aggMonth.totalIncome, expenses: aggMonth.totalExpense, net: aggMonth.netIncome,
+      pyRevenue: aggMonthPY.totalIncome, pyExpenses: aggMonthPY.totalExpense, pyNet: aggMonthPY.netIncome },
+    quarter: { label: `Q${qNum} ${y} (through ${MONTH_LABEL[m - 1]})`, range: `${qCurr.start} to ${qCurr.end}`,
+      revenue: aggQuarter.totalIncome, expenses: aggQuarter.totalExpense, net: aggQuarter.netIncome,
+      pyRevenue: aggQuarterPY.totalIncome, pyExpenses: aggQuarterPY.totalExpense, pyNet: aggQuarterPY.netIncome },
+    ytd: { label: `YTD ${y}`, range: `${ytdCurr.start} to ${ytdCurr.end}`,
+      revenue: aggYtd.totalIncome, expenses: aggYtd.totalExpense, net: aggYtd.netIncome,
+      pyRevenue: aggYtdPY.totalIncome, pyExpenses: aggYtdPY.totalExpense, pyNet: aggYtdPY.netIncome },
+  };
+
+  // Unified P&L: one row per account with 6 numeric columns
+  const accountMap = new Map();
+  const fold = (agg, colKey) => {
+    for (const a of agg.byAccount) {
+      const k = a.account_id || a.account_code;
+      const cur = accountMap.get(k) || {
+        code: a.account_code, name: a.account_name, type: a.account_type, subtype: a.account_subtype || "other",
+        monthCurr: 0, monthPY: 0, quarterCurr: 0, quarterPY: 0, ytdCurr: 0, ytdPY: 0,
+      };
+      cur[colKey] = (cur[colKey] || 0) + a.amount;
+      accountMap.set(k, cur);
+    }
+  };
+  fold(aggMonth, "monthCurr"); fold(aggMonthPY, "monthPY");
+  fold(aggQuarter, "quarterCurr"); fold(aggQuarterPY, "quarterPY");
+  fold(aggYtd, "ytdCurr"); fold(aggYtdPY, "ytdPY");
+
+  const accounts = Array.from(accountMap.values())
+    .filter((a) => a.monthCurr || a.monthPY || a.quarterCurr || a.quarterPY || a.ytdCurr || a.ytdPY)
+    .sort((a, b) => {
+      if (a.type !== b.type) return a.type === "income" ? -1 : 1;
+      return (a.code || "").localeCompare(b.code || "");
+    });
+
+  // SF COMP_RECAP — YTD by comp_type/category, monthly progression
+  const compYtdByCat = new Map();
+  const compYtdByType = new Map();
+  const compMonthly = new Map();
+  let compYtdTotal = 0;
+  for (const c of src.compRows) {
+    if (c.period_year !== y) continue;
+    const amt = parseFloat(c.amount || 0);
+    const catKey = `${c.comp_type || "?"} — ${c.comp_category || "?"}`;
+    const typeKey = c.comp_type || "?";
+    const monthKey = `${MONTH_LABEL[(c.period_month || 1) - 1]} ${c.period_year}`;
+    compYtdByCat.set(catKey, (compYtdByCat.get(catKey) || 0) + amt);
+    compYtdByType.set(typeKey, (compYtdByType.get(typeKey) || 0) + amt);
+    compMonthly.set(monthKey, (compMonthly.get(monthKey) || 0) + amt);
+    compYtdTotal += amt;
+  }
+
+  // Payroll YTD
+  const ytdPayroll = src.payrollRuns
+    .filter((r) => r.pay_date && r.pay_date.startsWith(String(y)))
+    .reduce((acc, r) => {
+      acc.gross += parseFloat(r.gross_payroll || 0);
+      acc.taxes += parseFloat(r.employer_taxes || 0);
+      acc.net += parseFloat(r.net_payroll || 0);
+      acc.runs += 1;
+      return acc;
+    }, { gross: 0, taxes: 0, net: 0, runs: 0 });
+  const recentPayroll = src.payrollRuns.slice(0, 10);
+
+  // AIPP
+  const aippCurrent = src.aippRows[0] || null;
+  const aippPrior = src.aippRows[1] || null;
 
   return {
     asOfDate: asOf.toISOString().slice(0, 10),
-    agencyName,
-    cutoverDate,
-    comparisons,
+    agencyName: src.agencyName,
+    cutoverDate: src.cutover,
+    periodLabels: {
+      monthCurr: kpis.month.label, monthPY: `${MONTH_LABEL[m - 1]} ${y - 1}`,
+      quarterCurr: `Q${qNum} ${y}`, quarterPY: `Q${qNum} ${y - 1}`,
+      ytdCurr: `YTD ${y}`, ytdPY: `YTD ${y - 1}`,
+      monthRange: `${monthCurr.start} to ${monthCurr.end}`,
+      quarterRange: `${qCurr.start} to ${qCurr.end}`,
+      ytdRange: `${ytdCurr.start} to ${ytdCurr.end}`,
+    },
+    kpis,
+    accounts,
+    compRecap: {
+      currentYear: y,
+      ytdByCategory: Array.from(compYtdByCat.entries()).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])),
+      ytdByType: Array.from(compYtdByType.entries()).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])),
+      monthlyTotals: Array.from(compMonthly.entries()),
+      ytdTotal: compYtdTotal,
+    },
+    payroll: { ytd: ytdPayroll, recent: recentPayroll, currentYear: y },
+    aipp: { current: aippCurrent, prior: aippPrior },
   };
 }
 
-// generatePrintHtml(report) — returns a complete HTML document string.
+// ── Printable HTML renderer ──────────────────────────────────
 function generatePrintHtml(report) {
   const fmtMoney = (n) => {
+    const v = Number(n) || 0;
+    const abs = Math.abs(v);
+    const formatted = "$" + abs.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    return v < 0 ? `(${formatted})` : formatted;
+  };
+  const fmtMoneyCents = (n) => {
     const v = Number(n) || 0;
     const abs = Math.abs(v);
     const formatted = "$" + abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1260,115 +1297,313 @@ function generatePrintHtml(report) {
     const sign = n > 0 ? "+" : "";
     return `${sign}${n.toFixed(1)}%`;
   };
-  const escapeHtml = (s) => String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const pctDelta = (curr, prior) => {
+    if (!Number.isFinite(prior) || prior === 0) return null;
+    return ((curr - prior) / Math.abs(prior)) * 100;
+  };
+  const escapeHtml = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-  const renderComparison = (cmp) => {
-    const incomeAccts = cmp.accounts.filter((a) => a.type === "income" && (a.curr !== 0 || a.prior !== 0));
-    const expenseAccts = cmp.accounts.filter((a) => a.type === "expense" && (a.curr !== 0 || a.prior !== 0));
-    const row = (a) => `
-      <tr>
-        <td class="acct">${escapeHtml(a.code)} ${escapeHtml(a.name)}</td>
-        <td class="num">${fmtMoney(a.curr)}</td>
-        <td class="num">${fmtMoney(a.prior)}</td>
-        <td class="num ${a.delta >= 0 ? "pos" : "neg"}">${fmtMoney(a.delta)}</td>
-        <td class="num ${a.pctDelta !== null && a.pctDelta >= 0 ? "pos" : "neg"}">${fmtPct(a.pctDelta)}</td>
-      </tr>`;
-    const incomeRows = incomeAccts.map(row).join("");
-    const expenseRows = expenseAccts.map(row).join("");
-    const t = cmp.totals;
-    const netPct = t.priorNet !== 0 ? ((t.deltaNet / Math.abs(t.priorNet)) * 100) : null;
-    const incPct = t.priorIncome !== 0 ? ((t.deltaIncome / Math.abs(t.priorIncome)) * 100) : null;
-    const expPct = t.priorExpense !== 0 ? ((t.deltaExpense / Math.abs(t.priorExpense)) * 100) : null;
+  // SECTION 1: Cover + KPI snapshot
+  const renderCover = () => {
+    const k = report.kpis;
+    const expRatio = (rev, exp) => (rev > 0 ? (exp / rev) * 100 : null);
+    const rows = [
+      ["Total Revenue", k.month.revenue, k.month.pyRevenue, k.quarter.revenue, k.quarter.pyRevenue, k.ytd.revenue, k.ytd.pyRevenue],
+      ["Total Expenses", k.month.expenses, k.month.pyExpenses, k.quarter.expenses, k.quarter.pyExpenses, k.ytd.expenses, k.ytd.pyExpenses],
+      ["Net Income", k.month.net, k.month.pyNet, k.quarter.net, k.quarter.pyNet, k.ytd.net, k.ytd.pyNet],
+    ];
+    const ratios = [expRatio(k.month.revenue, k.month.expenses), expRatio(k.quarter.revenue, k.quarter.expenses), expRatio(k.ytd.revenue, k.ytd.expenses)];
     return `
-      <section class="cmp">
-        <h2>${escapeHtml(cmp.label)}</h2>
-        <p class="lineage">${escapeHtml(cmp.lineageNote)}</p>
-        <table>
+      <section class="cover">
+        <h2>Executive Summary</h2>
+        <table class="kpi">
           <thead>
             <tr>
-              <th class="acct">Account</th>
-              <th class="num">${escapeHtml(cmp.currLabel)}</th>
-              <th class="num">${escapeHtml(cmp.priorLabel)}</th>
-              <th class="num">$ Variance</th>
-              <th class="num">% Variance</th>
+              <th></th>
+              <th colspan="3">${escapeHtml(k.month.label)}</th>
+              <th colspan="3">${escapeHtml(k.quarter.label)}</th>
+              <th colspan="3">${escapeHtml(k.ytd.label)}</th>
+            </tr>
+            <tr class="sub">
+              <th>Metric</th>
+              <th class="num">Current</th><th class="num">Prior Year</th><th class="num">% Δ</th>
+              <th class="num">Current</th><th class="num">Prior Year</th><th class="num">% Δ</th>
+              <th class="num">Current</th><th class="num">Prior Year</th><th class="num">% Δ</th>
             </tr>
           </thead>
           <tbody>
-            <tr class="group"><td colspan="5">REVENUE</td></tr>
-            ${incomeRows || '<tr><td colspan="5" class="empty">No revenue activity in either period.</td></tr>'}
-            <tr class="subtotal">
-              <td class="acct">Total Revenue</td>
-              <td class="num">${fmtMoney(t.currIncome)}</td>
-              <td class="num">${fmtMoney(t.priorIncome)}</td>
-              <td class="num ${t.deltaIncome >= 0 ? "pos" : "neg"}">${fmtMoney(t.deltaIncome)}</td>
-              <td class="num ${incPct !== null && incPct >= 0 ? "pos" : "neg"}">${fmtPct(incPct)}</td>
-            </tr>
-            <tr class="group"><td colspan="5">OPERATING EXPENSES</td></tr>
-            ${expenseRows || '<tr><td colspan="5" class="empty">No expense activity in either period.</td></tr>'}
-            <tr class="subtotal">
-              <td class="acct">Total Expenses</td>
-              <td class="num">${fmtMoney(t.currExpense)}</td>
-              <td class="num">${fmtMoney(t.priorExpense)}</td>
-              <td class="num ${t.deltaExpense <= 0 ? "pos" : "neg"}">${fmtMoney(t.deltaExpense)}</td>
-              <td class="num ${expPct !== null && expPct <= 0 ? "pos" : "neg"}">${fmtPct(expPct)}</td>
-            </tr>
-            <tr class="net">
-              <td class="acct">NET INCOME</td>
-              <td class="num">${fmtMoney(t.currNet)}</td>
-              <td class="num">${fmtMoney(t.priorNet)}</td>
-              <td class="num ${t.deltaNet >= 0 ? "pos" : "neg"}">${fmtMoney(t.deltaNet)}</td>
-              <td class="num ${netPct !== null && netPct >= 0 ? "pos" : "neg"}">${fmtPct(netPct)}</td>
+            ${rows.map((r) => {
+              const [name, mC, mP, qC, qP, yC, yP] = r;
+              const mPct = pctDelta(mC, mP);
+              const qPct = pctDelta(qC, qP);
+              const yPct = pctDelta(yC, yP);
+              const isExpense = name === "Total Expenses";
+              const goodWhen = isExpense ? "neg" : "pos";
+              const badWhen = isExpense ? "pos" : "neg";
+              const cls = (pct) => pct === null ? "" : ((pct >= 0) === !isExpense ? "pos" : "neg");
+              return `
+                <tr${name === "Net Income" ? ' class="net"' : ""}>
+                  <td class="acct">${escapeHtml(name)}</td>
+                  <td class="num">${fmtMoney(mC)}</td><td class="num">${fmtMoney(mP)}</td><td class="num ${cls(mPct)}">${fmtPct(mPct)}</td>
+                  <td class="num">${fmtMoney(qC)}</td><td class="num">${fmtMoney(qP)}</td><td class="num ${cls(qPct)}">${fmtPct(qPct)}</td>
+                  <td class="num">${fmtMoney(yC)}</td><td class="num">${fmtMoney(yP)}</td><td class="num ${cls(yPct)}">${fmtPct(yPct)}</td>
+                </tr>`;
+            }).join("")}
+            <tr class="subtle">
+              <td class="acct">Expense Ratio</td>
+              <td class="num" colspan="3">${ratios[0] === null ? "—" : ratios[0].toFixed(1) + "%"}</td>
+              <td class="num" colspan="3">${ratios[1] === null ? "—" : ratios[1].toFixed(1) + "%"}</td>
+              <td class="num" colspan="3">${ratios[2] === null ? "—" : ratios[2].toFixed(1) + "%"}</td>
             </tr>
           </tbody>
         </table>
       </section>`;
   };
 
+  // SECTION 2: Profit & Loss — wide table
+  const renderPL = () => {
+    const acc = report.accounts;
+    const income = acc.filter((a) => a.type === "income");
+    const expense = acc.filter((a) => a.type === "expense");
+    const k = report.kpis;
+    const rowFor = (a) => {
+      const mPct = pctDelta(a.monthCurr, a.monthPY);
+      const qPct = pctDelta(a.quarterCurr, a.quarterPY);
+      const yPct = pctDelta(a.ytdCurr, a.ytdPY);
+      const isExpense = a.type === "expense";
+      const cls = (pct) => pct === null ? "" : ((pct >= 0) === !isExpense ? "pos" : "neg");
+      return `
+        <tr>
+          <td class="acct">${escapeHtml(a.code)} ${escapeHtml(a.name)}</td>
+          <td class="num">${fmtMoney(a.monthCurr)}</td><td class="num">${fmtMoney(a.monthPY)}</td><td class="num ${cls(mPct)}">${fmtPct(mPct)}</td>
+          <td class="num">${fmtMoney(a.quarterCurr)}</td><td class="num">${fmtMoney(a.quarterPY)}</td><td class="num ${cls(qPct)}">${fmtPct(qPct)}</td>
+          <td class="num">${fmtMoney(a.ytdCurr)}</td><td class="num">${fmtMoney(a.ytdPY)}</td><td class="num ${cls(yPct)}">${fmtPct(yPct)}</td>
+        </tr>`;
+    };
+    const subtotalRow = (label, currs, isExpense) => {
+      const mPct = pctDelta(currs.mC, currs.mP);
+      const qPct = pctDelta(currs.qC, currs.qP);
+      const yPct = pctDelta(currs.yC, currs.yP);
+      const cls = (pct) => pct === null ? "" : ((pct >= 0) === !isExpense ? "pos" : "neg");
+      return `
+        <tr class="subtotal">
+          <td class="acct">${label}</td>
+          <td class="num">${fmtMoney(currs.mC)}</td><td class="num">${fmtMoney(currs.mP)}</td><td class="num ${cls(mPct)}">${fmtPct(mPct)}</td>
+          <td class="num">${fmtMoney(currs.qC)}</td><td class="num">${fmtMoney(currs.qP)}</td><td class="num ${cls(qPct)}">${fmtPct(qPct)}</td>
+          <td class="num">${fmtMoney(currs.yC)}</td><td class="num">${fmtMoney(currs.yP)}</td><td class="num ${cls(yPct)}">${fmtPct(yPct)}</td>
+        </tr>`;
+    };
+    return `
+      <section class="pl">
+        <h2>Profit &amp; Loss Statement</h2>
+        <p class="hint">All three periods shown side-by-side with prior-year comparison.</p>
+        <table class="pl-table">
+          <thead>
+            <tr>
+              <th class="acct" rowspan="2">Account</th>
+              <th colspan="3">${escapeHtml(report.periodLabels.monthCurr)}</th>
+              <th colspan="3">${escapeHtml(report.periodLabels.quarterCurr)}</th>
+              <th colspan="3">${escapeHtml(report.periodLabels.ytdCurr)}</th>
+            </tr>
+            <tr class="sub">
+              <th class="num">Current</th><th class="num">Prior</th><th class="num">% Δ</th>
+              <th class="num">Current</th><th class="num">Prior</th><th class="num">% Δ</th>
+              <th class="num">Current</th><th class="num">Prior</th><th class="num">% Δ</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="group"><td colspan="10">REVENUE</td></tr>
+            ${income.map(rowFor).join("") || '<tr><td colspan="10" class="empty">No revenue activity.</td></tr>'}
+            ${subtotalRow("Total Revenue", {
+              mC: k.month.revenue, mP: k.month.pyRevenue,
+              qC: k.quarter.revenue, qP: k.quarter.pyRevenue,
+              yC: k.ytd.revenue, yP: k.ytd.pyRevenue,
+            }, false)}
+            <tr class="group"><td colspan="10">OPERATING EXPENSES</td></tr>
+            ${expense.map(rowFor).join("") || '<tr><td colspan="10" class="empty">No expense activity.</td></tr>'}
+            ${subtotalRow("Total Expenses", {
+              mC: k.month.expenses, mP: k.month.pyExpenses,
+              qC: k.quarter.expenses, qP: k.quarter.pyExpenses,
+              yC: k.ytd.expenses, yP: k.ytd.pyExpenses,
+            }, true)}
+            ${subtotalRow("NET INCOME", {
+              mC: k.month.net, mP: k.month.pyNet,
+              qC: k.quarter.net, qP: k.quarter.pyNet,
+              yC: k.ytd.net, yP: k.ytd.pyNet,
+            }, false).replace("subtotal", "net")}
+          </tbody>
+        </table>
+      </section>`;
+  };
+
+  // SECTION 3: SF COMP_RECAP YTD
+  const renderCompRecap = () => {
+    const c = report.compRecap;
+    const topCategories = c.ytdByCategory.slice(0, 20);
+    const monthlyRows = c.monthlyTotals.map(([month, amt]) => `<tr><td class="acct">${escapeHtml(month)}</td><td class="num">${fmtMoneyCents(amt)}</td></tr>`).join("");
+    const catRows = topCategories.map(([cat, amt]) => `<tr><td class="acct">${escapeHtml(cat)}</td><td class="num">${fmtMoneyCents(amt)}</td></tr>`).join("");
+    const typeRows = c.ytdByType.map(([type, amt]) => `<tr><td class="acct">${escapeHtml(type)}</td><td class="num">${fmtMoneyCents(amt)}</td></tr>`).join("");
+    return `
+      <section class="comp">
+        <h2>SF COMP_RECAP — YTD ${escapeHtml(String(c.currentYear))}</h2>
+        <p class="hint">State Farm compensation activity for the calendar year. YTD total: <strong>${fmtMoneyCents(c.ytdTotal)}</strong></p>
+        <div class="two-col">
+          <div>
+            <h3>By Compensation Type</h3>
+            <table class="mini">
+              <thead><tr><th class="acct">Type</th><th class="num">YTD</th></tr></thead>
+              <tbody>${typeRows || '<tr><td colspan="2" class="empty">No data.</td></tr>'}</tbody>
+            </table>
+          </div>
+          <div>
+            <h3>Monthly Compensation Activity</h3>
+            <table class="mini">
+              <thead><tr><th class="acct">Month</th><th class="num">Activity</th></tr></thead>
+              <tbody>${monthlyRows || '<tr><td colspan="2" class="empty">No data.</td></tr>'}</tbody>
+            </table>
+          </div>
+        </div>
+        <h3>Top Categories (Top 20)</h3>
+        <table class="mini wide">
+          <thead><tr><th class="acct">Category</th><th class="num">YTD Amount</th></tr></thead>
+          <tbody>${catRows || '<tr><td colspan="2" class="empty">No data.</td></tr>'}</tbody>
+        </table>
+      </section>`;
+  };
+
+  // SECTION 4: Payroll YTD
+  const renderPayroll = () => {
+    const p = report.payroll;
+    const recentRows = p.recent.map((r) => {
+      const start = r.pay_period_start ? new Date(r.pay_period_start) : null;
+      const end = r.pay_period_end ? new Date(r.pay_period_end) : null;
+      const paid = r.pay_date ? new Date(r.pay_date) : null;
+      const fmtD = (d) => d ? d.toISOString().slice(0, 10) : "—";
+      return `
+        <tr>
+          <td class="acct">${fmtD(start)} – ${fmtD(end)}</td>
+          <td class="acct">${fmtD(paid)}</td>
+          <td class="num">${fmtMoneyCents(r.gross_payroll || 0)}</td>
+          <td class="num">${fmtMoneyCents(r.employer_taxes || 0)}</td>
+          <td class="num">${fmtMoneyCents(r.net_payroll || 0)}</td>
+          <td class="acct">${escapeHtml(r.status || "")}${r.is_synthesized ? " †" : ""}</td>
+        </tr>`;
+    }).join("");
+    return `
+      <section class="payroll">
+        <h2>Payroll — YTD ${escapeHtml(String(p.currentYear))}</h2>
+        <table class="kpi-strip">
+          <tr>
+            <td><div class="kpi-lbl">YTD Gross</div><div class="kpi-val">${fmtMoneyCents(p.ytd.gross)}</div></td>
+            <td><div class="kpi-lbl">YTD Employer Taxes</div><div class="kpi-val">${fmtMoneyCents(p.ytd.taxes)}</div></td>
+            <td><div class="kpi-lbl">YTD Net Payroll</div><div class="kpi-val">${fmtMoneyCents(p.ytd.net)}</div></td>
+            <td><div class="kpi-lbl">Pay Runs</div><div class="kpi-val">${p.ytd.runs}</div></td>
+          </tr>
+        </table>
+        <h3>Most Recent Pay Runs</h3>
+        <table class="mini wide">
+          <thead>
+            <tr>
+              <th class="acct">Pay Period</th><th class="acct">Pay Date</th>
+              <th class="num">Gross</th><th class="num">ER Taxes</th><th class="num">Net</th>
+              <th class="acct">Status</th>
+            </tr>
+          </thead>
+          <tbody>${recentRows || '<tr><td colspan="6" class="empty">No pay runs.</td></tr>'}</tbody>
+        </table>
+        <p class="hint">† marker = run synthesized from bank transactions; actual Paychex statement pending.</p>
+      </section>`;
+  };
+
+  // SECTION 5: AIPP & ScoreBoard
+  const renderAipp = () => {
+    const a = report.aipp;
+    if (!a.current) return `
+      <section class="aipp">
+        <h2>AIPP &amp; ScoreBoard</h2>
+        <p class="empty">No AIPP tracking data available.</p>
+      </section>`;
+    const cur = a.current;
+    const pri = a.prior;
+    const target = parseFloat(cur.target_amount || 0);
+    const earned = parseFloat(cur.earned_ytd || 0);
+    const projected = parseFloat(cur.projected_full_year || 0);
+    const pct = target > 0 ? (earned / target) * 100 : 0;
+    const priorEarned = pri ? parseFloat(pri.earned_ytd || 0) : null;
+    const priorYr = pri ? pri.program_year : null;
+    return `
+      <section class="aipp">
+        <h2>AIPP Progress — Program Year ${escapeHtml(String(cur.program_year))}</h2>
+        <table class="kpi-strip">
+          <tr>
+            <td><div class="kpi-lbl">Annual Target</div><div class="kpi-val">${fmtMoneyCents(target)}</div></td>
+            <td><div class="kpi-lbl">Earned YTD</div><div class="kpi-val">${fmtMoneyCents(earned)}</div></td>
+            <td><div class="kpi-lbl">Projected Full-Year</div><div class="kpi-val">${fmtMoneyCents(projected)}</div></td>
+            <td><div class="kpi-lbl">Achievement</div><div class="kpi-val">${pct.toFixed(1)}%</div></td>
+          </tr>
+        </table>
+        ${pri ? `<p class="hint">Prior program year (${escapeHtml(String(priorYr))}) earned: <strong>${fmtMoneyCents(priorEarned)}</strong>. AIPP pays Jan ${escapeHtml(String((cur.program_year || 0)))} on ${escapeHtml(String((cur.program_year || 0) - 1))} qualifying activity.</p>` : ""}
+        ${cur.notes ? `<p class="hint">Notes: ${escapeHtml(cur.notes)}</p>` : ""}
+      </section>`;
+  };
+
+  // CSS — landscape Letter, optimized for multi-column tables
   const styles = `
-    @page { size: letter; margin: 0.5in 0.5in 0.5in 0.5in; }
+    @page { size: letter landscape; margin: 0.4in 0.4in 0.4in 0.4in; }
     * { box-sizing: border-box; }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: #1B2B4B; margin: 0; padding: 16px; font-size: 11px; }
-    header.report { border-bottom: 2px solid #1B2B4B; padding-bottom: 10px; margin-bottom: 14px; }
-    header.report h1 { margin: 0 0 4px 0; font-size: 18px; }
-    header.report .meta { font-size: 10px; color: #64748B; }
-    header.report .lineage { font-size: 9px; color: #64748B; margin-top: 6px; font-style: italic; }
-    section.cmp { page-break-after: always; }
-    section.cmp:last-child { page-break-after: auto; }
-    section.cmp h2 { font-size: 14px; margin: 0 0 4px 0; padding-bottom: 4px; border-bottom: 1px solid #CBD5E1; }
-    section.cmp p.lineage { font-size: 9px; color: #64748B; font-style: italic; margin: 0 0 10px 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: #1B2B4B; margin: 0; padding: 12px; font-size: 10px; }
+    header.report { border-bottom: 2px solid #1B2B4B; padding-bottom: 8px; margin-bottom: 12px; }
+    header.report h1 { margin: 0 0 3px 0; font-size: 17px; }
+    header.report .meta { font-size: 10px; color: #475569; }
+    header.report .lineage { font-size: 9px; color: #64748B; margin-top: 5px; font-style: italic; line-height: 1.4; }
+    section { page-break-after: always; }
+    section:last-child { page-break-after: auto; }
+    section h2 { font-size: 13px; margin: 0 0 4px 0; padding-bottom: 3px; border-bottom: 1px solid #CBD5E1; color: #1B2B4B; }
+    section h3 { font-size: 11px; margin: 10px 0 4px 0; color: #1B2B4B; }
+    section p.hint { font-size: 9px; color: #64748B; font-style: italic; margin: 0 0 8px 0; }
+    section p.empty { font-size: 11px; color: #94A3B8; font-style: italic; }
     table { width: 100%; border-collapse: collapse; }
-    th, td { padding: 4px 6px; text-align: left; vertical-align: top; }
-    th { background: #F1F5F9; font-size: 10px; font-weight: 600; border-bottom: 1px solid #94A3B8; }
-    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-    tr.group td { background: #1B2B4B; color: #fff; font-weight: 600; padding: 4px 6px; font-size: 10px; letter-spacing: 0.04em; }
+    th, td { padding: 3px 5px; text-align: left; vertical-align: top; }
+    th { background: #F1F5F9; font-size: 9px; font-weight: 600; border-bottom: 1px solid #94A3B8; }
+    th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    th.acct, td.acct { width: auto; text-align: left; }
+    tr.group td { background: #1B2B4B; color: #fff; font-weight: 600; padding: 4px 6px; font-size: 9px; letter-spacing: 0.05em; }
     tr.subtotal td { border-top: 1px solid #94A3B8; background: #F8FAFC; font-weight: 600; }
-    tr.net td { border-top: 2px solid #1B2B4B; background: #EFF6FF; font-weight: 700; font-size: 12px; padding: 8px 6px; }
+    tr.subtle td { background: #F8FAFC; color: #475569; font-size: 9px; }
+    tr.net td { border-top: 2px solid #1B2B4B; background: #EFF6FF; font-weight: 700; font-size: 11px; padding: 6px 5px; }
     td.empty { text-align: center; color: #94A3B8; font-style: italic; padding: 8px; }
-    td.acct { width: 38%; }
     td.pos { color: #047857; }
     td.neg { color: #B91C1C; }
-    footer.report { margin-top: 14px; padding-top: 8px; border-top: 1px solid #CBD5E1; font-size: 9px; color: #64748B; text-align: center; }
+    table.kpi th[colspan] { text-align: center; background: #1B2B4B; color: #fff; font-size: 10px; padding: 5px 6px; }
+    table.kpi th.sub { background: #F1F5F9; color: #1B2B4B; font-size: 9px; }
+    table.kpi-strip td { width: 25%; padding: 8px 10px; background: #F8FAFC; border: 1px solid #E2E8F0; }
+    table.kpi-strip .kpi-lbl { font-size: 9px; color: #64748B; }
+    table.kpi-strip .kpi-val { font-size: 14px; font-weight: 700; color: #1B2B4B; margin-top: 2px; }
+    table.mini th, table.mini td { font-size: 9.5px; padding: 3px 5px; }
+    table.mini.wide { width: 100%; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    table.pl-table th.acct, table.pl-table td.acct { width: 24%; }
+    table.pl-table th.num, table.pl-table td.num { width: 8.4%; }
+    footer.report { margin-top: 12px; padding-top: 6px; border-top: 1px solid #CBD5E1; font-size: 8px; color: #64748B; text-align: center; }
     @media print { body { padding: 0; } .no-print { display: none; } }
   `;
 
   const head = `
     <header class="report">
       <h1>${escapeHtml(report.agencyName)}</h1>
-      <div class="meta">Full Financial Report &mdash; As of ${escapeHtml(report.asOfDate)}</div>
-      <div class="meta">Cash basis &middot; All figures in USD</div>
+      <div class="meta">Full Financial Report &mdash; As of ${escapeHtml(report.asOfDate)} &middot; Cash basis &middot; All figures in USD</div>
       <p class="lineage">
         DATA LINEAGE: Periods through ${escapeHtml(report.cutoverDate)} reflect CPA-prepared monthly P&amp;L (income-tax basis).
         Periods after ${escapeHtml(report.cutoverDate)} reflect live BCC General Ledger postings (cash basis).
-        The unified view (v_income_statement) blends both sources at the account level so year-over-year comparisons are apples-to-apples at the account-type level.
+        The unified view blends both sources at the account level so year-over-year comparisons are apples-to-apples at the account level.
       </p>
     </header>`;
 
-  const body = report.comparisons.map(renderComparison).join("\n");
+  const body = renderCover() + renderPL() + renderCompRecap() + renderPayroll() + renderAipp();
   const foot = `<footer class="report">Generated by Business Command Center &middot; ${escapeHtml(report.agencyName)} &middot; ${escapeHtml(new Date().toISOString())}</footer>`;
 
   return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Full Financial Report &mdash; ${escapeHtml(report.asOfDate)}</title><style>${styles}</style></head><body>${head}${body}${foot}<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},250);});</script></body></html>`;
 }
-
 
 
 export default function Financials() {
