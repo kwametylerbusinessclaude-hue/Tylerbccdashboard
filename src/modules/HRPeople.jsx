@@ -88,7 +88,7 @@ function useProducerROI() {
 
         const [agencyRes, staffRes, prodRes, payrollDetailRes, payrollRunsRes, compRes] = await Promise.all([
           supabase.from("agency").select("id, name, smvc_rate_pc, blended_rate_other, lapse_rate_annual").eq("id", AGENCY_ID).single(),
-          supabase.from("staff").select("id, first_name, last_name, role, start_date, pay_rate, employment_type, is_active").eq("agency_id", AGENCY_ID),
+          supabase.from("staff").select("id, first_name, last_name, role, start_date, end_date, pay_rate, pay_type, employment_type, is_active, email, phone, notes").eq("agency_id", AGENCY_ID),
           supabase.from("producer_production").select("staff_id, period_year, period_month, line_of_business, policies_issued, premium_issued").eq("agency_id", AGENCY_ID).order("period_year",{ascending:false}).order("period_month",{ascending:false}),
           supabase.from("payroll_detail").select("staff_id, gross_pay, payroll_run_id"),
           supabase.from("payroll_runs").select("id, pay_date, pay_period_start, pay_period_end").eq("agency_id", AGENCY_ID).order("pay_date",{ascending:false}).limit(24),
@@ -645,7 +645,7 @@ const StaffDirectory = ({ staff }) => {
                     ⚠ {member.compliance_flag}
                   </div>
                 )}
-                <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name} ${member.last_name}\nRole: ${member.role}\nEmployment: ${member.employment_type}\nPay: ${member.pay_type} — ${member.pay_type==="hourly"?"$"+member.pay_rate+"/hr":"$"+member.pay_rate.toLocaleString()+"/yr"}\nLicensed: ${member.licensed?"Yes — "+member.license_states.join(", "):"No"}\nStart: ${member.start_date}\nNotes: ${member.notes}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
+                <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name} ${member.last_name}\nRole: ${member.role}\nEmployment: ${member.employment_type}\nPay: ${member.pay_type} — ${member.pay_type==="hourly"?"$"+member.pay_rate+"/hr":"$"+member.pay_rate.toLocaleString()+"/yr"}\nLicensed: ${member.licensed?"Yes — "+(Array.isArray(member.license_states)?member.license_states.join(", "):"(states not on file)"):"No"}\nStart: ${member.start_date}\nNotes: ${member.notes}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
               </div>
             )}
           </Card>
