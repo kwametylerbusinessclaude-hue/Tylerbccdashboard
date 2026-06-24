@@ -14,6 +14,8 @@ import Settings from "./src/modules/Settings.jsx";
 import ErrorBoundary from "./src/components/ErrorBoundary.jsx";
 import { supabase, AGENCY_ID } from "./src/lib/supabase.js";
 import DemoBanner from "./src/components/DemoBanner.jsx";
+import { useAuthUser } from "./src/components/AuthGate.jsx";
+import { signOut as authSignOut } from "./src/lib/auth.js";
 
 
 // ============================================================
@@ -407,6 +409,8 @@ export default function BCCApp() {
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [agency, setAgency] = useState(MOCK_AGENCY);
+  // The authenticated user (from public.users) — populated by AuthGate via context.
+  const authUser = useAuthUser();
 
   useEffect(() => {
     if (!supabase || !AGENCY_ID) return;
@@ -424,15 +428,21 @@ export default function BCCApp() {
       const data = agencyRes.data;
       const alertCount = (alertsRes && !alertsRes.error) ? (alertsRes.count || 0) : 0;
       if (data) {
+        // Prefer the logged-in user's identity from public.users; fall back
+        // to the agency owner record only if authUser hasn't loaded yet.
+        const displayName = (authUser && authUser.full_name)
+          || data.owner_name || MOCK_AGENCY.user.name;
+        const displayEmail = (authUser && (authUser.email || authUser.auth_email))
+          || data.primary_email || MOCK_AGENCY.user.email;
+        const displayRole = (authUser && authUser.role) || "owner";
         setAgency({
           name: data.name || MOCK_AGENCY.name,
           agentCode: data.state_farm_agent_code || MOCK_AGENCY.agentCode,
           user: {
-            name: data.owner_name || MOCK_AGENCY.user.name,
-            initials: (data.owner_name || MOCK_AGENCY.user.name)
-              .split(" ").map(n => n[0]).join("").toUpperCase(),
-            role: "owner",
-            email: data.primary_email || MOCK_AGENCY.user.email,
+            name: displayName,
+            initials: displayName.split(" ").map(n => n[0]).join("").toUpperCase().slice(0,2),
+            role: displayRole,
+            email: displayEmail,
           },
           alerts: alertCount,
         });
@@ -441,7 +451,7 @@ export default function BCCApp() {
         setAgency(a => ({ ...a, alerts: alertCount }));
       }
     });
-  }, []);
+  }, [authUser?.id, authUser?.full_name, authUser?.role]);
 
   const visibleNav = NAV_ITEMS.filter(n => n.roles.includes(agency.user.role));
 
@@ -498,7 +508,10 @@ export default function BCCApp() {
                     </div>
                   ))}
                   <div style={{ borderTop: `1px solid ${TOKENS.slate200}`, marginTop: 4, paddingTop: 4 }}>
-                    <div style={{ padding: "7px 10px", fontSize: 12, color: TOKENS.red, cursor: "pointer", borderRadius: 6, display: "flex", alignItems: "center", gap: 8 }}>
+                    <div
+                      style={{ padding: "7px 10px", fontSize: 12, color: TOKENS.red, cursor: "pointer", borderRadius: 6, display: "flex", alignItems: "center", gap: 8 }}
+                      onClick={() => { setUserMenuOpen(false); authSignOut(); }}
+                    >
                       <Icon name="logout" size={13} color={TOKENS.red} /> Sign out
                     </div>
                   </div>
