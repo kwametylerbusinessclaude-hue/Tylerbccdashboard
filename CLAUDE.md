@@ -115,6 +115,94 @@ VITE_USE_MOCK_DATA=false (production; set to true only for sales demos)
 
 ---
 
+## Authentication & Authorization (added 2026-06-24)
+
+The dashboard is gated. Users sign in with email + password (Supabase Auth, bcrypt cost-10).
+First user provisioned per agency = owner. New users are invited (not self-sign-up).
+
+### File map
+
+| File | Role |
+|---|---|
+| `src/lib/auth.js` | Auth helpers: `signIn`, `signOut`, `requestPasswordReset`, `updatePassword`, `getCurrentSession`, `getCurrentUser`, `getUserProfile` (reads `must_change_password` from `public.users`). |
+| `src/components/AuthGate.jsx` | Wraps `BCCApp`. Owns the auth state machine: `loading → unauthenticated (Login) → must_change_password (ForcePasswordChange) → authenticated (BCCApp)`. Also handles `#type=recovery` deep-link routing to `ResetPasswordCallback`. |
+| `src/components/Login.jsx` | Email + password form. Inline "Forgot password?" toggle to request a reset email. |
+| `src/components/ForcePasswordChange.jsx` | Gated screen shown immediately after first login. Updates password via `auth.updateUser({ password })`, then clears `users.must_change_password = false`, then proceeds to BCCApp. |
+| `src/components/ResetPasswordCallback.jsx` | Handles the `/#type=recovery&access_token=...` hash from the reset email. Sets the new password, then re-routes to login. |
+| `supabase/migrations/034_auth_must_change_password.sql` | Adds `users.must_change_password` (default false). Adds two per-user RLS policies (`users_self_select`, `users_self_clear_mcp`) — these stay `TO authenticated`. |
+| `supabase/migrations/035_extend_rls_to_authenticated.sql` | Extends every prior anon-only policy on `public.*` tables to `TO anon, authenticated`. Required because logged-in users no longer match `anon`. |
+
+### Supabase auth config (machine-set, not dashboard-clicked)
+
+| Setting | Value | Why |
+|---|---|---|
+| `external_email_enabled` | `true` | Email/password is the only enabled provider. |
+| `disable_signup` | `true` | New users come in via invite from owner — no public sign-up. |
+| `site_url` | `https://tylerbccdashboard.vercel.app` | Production app URL. Reset emails redirect here. |
+| `uri_allow_list` | `https://tylerbccdashboard.vercel.app,/*` | Whitelisted redirect targets. |
+| `password_min_length` | `12` | Defense in depth, matches client validation. |
+
+To inspect / modify: use the Supabase MCP or the dashboard. Do **not** rely on environment-variable changes — the dashboard is the source of truth.
+
+### RLS pattern — read this every time you write a policy
+
+**Every policy on a `public.*` table that the BCC web app reads from must include both `anon` AND `authenticated` roles.** A policy `TO anon` alone does NOT cover authenticated users — they make requests as the `authenticated` role.
+
+```sql
+-- WRONG (modules go blank after login):
+CREATE POLICY "foo_select" ON public.foo FOR SELECT TO anon
+  USING (agency_id = '...');
+
+-- RIGHT:
+CREATE POLICY "foo_select" ON public.foo FOR SELECT TO anon, authenticated
+  USING (agency_id = '...');
+
+-- ALSO RIGHT (uses the implicit "public" role which covers both):
+CREATE POLICY "foo_select" ON public.foo FOR SELECT
+  USING (agency_id = '...');
+```
+
+**Exception:** per-user policies (those that scope on `auth.uid()`) should stay `TO authenticated` only. Examples: `users_self_select`, `users_self_clear_mcp`. Anonymous users can't have a `uid()`.
+
+### Sanity-check query (run after any RLS migration)
+
+```sql
+SELECT COUNT(*) FROM pg_policies
+WHERE schemaname = 'public' AND roles = ARRAY['anon']::name[];
+-- Should return 0.
+```
+
+If this returns > 0, you just shipped an anon-only policy. The web app will go blank for that table after login. Fix immediately with `ALTER POLICY ... TO anon, authenticated`.
+
+### Forced password change on first login
+
+`public.users.must_change_password` is `false` by default. When the owner invites a new user, set this to `true` on the row. On first login, `AuthGate` routes them to `ForcePasswordChange`. After successful update, the flag is cleared and they proceed to the dashboard.
+
+```sql
+-- Provision a new user (owner action):
+INSERT INTO public.users (agency_id, email, full_name, role, must_change_password, ...)
+VALUES ('98aa8b9b...', 'newuser@example.com', 'New User', 'producer', true, ...);
+
+-- Then create the auth.users record via Supabase Auth API or dashboard,
+-- and back-link auth_user_id on public.users.
+```
+
+### Bulk-create staff auth accounts (parked follow-up)
+
+Future-Claude: when the owner wants to roll out auth to the rest of the team, the pattern is:
+1. For each row in `public.staff` where `is_active = true` and the staff has an email:
+2. Call `supabase.auth.admin.createUser({ email, password_hash: bcrypt(...), email_confirm: true })`
+3. Insert a `public.users` row linking `auth_user_id`, `agency_id`, `email`, `full_name`, `role`, `must_change_password = true`
+4. Send each staff their temporary password (out-of-band — Slack DM, text, in-person)
+
+Don't generate temporary passwords with anything weaker than 16 chars of CSPRNG entropy.
+
+### Operational rule (logged 2026-06-24)
+
+> Before any session that creates or alters RLS on `public.*` tables, read this section. The 2026-06-24 RLS hotfix (migration 035) took 20 min to find because the symptom (blank modules) didn't point at RLS. Don't repeat that 20 min.
+
+---
+
 ## Hard-Learned Rules (from Dominique deployment — 8 hours of pain)
 
 **1. IMPORTS ON LINE 1**  
@@ -184,6 +272,16 @@ const value = data?.summary?.field || 0;
 const formatted = Number.isFinite(n) ? n.toLocaleString() : "—";
 ```
 The hook may not have returned yet. The field may not exist on the row. The number may be NaN from a bad calc. Code must degrade gracefully through all of these. The ErrorBoundary catches what slips through; the guards prevent most slips.
+
+**14. RLS COVERS BOTH `anon` AND `authenticated`**  
+The dashboard is auth-gated. Once a user logs in, requests run as the `authenticated` role, NOT `anon`. An RLS policy `TO anon` alone makes that table appear empty post-login. Always: `CREATE POLICY ... TO anon, authenticated` (or use the implicit `public` role).
+Sanity check after any RLS migration:
+```sql
+SELECT COUNT(*) FROM pg_policies
+WHERE schemaname = 'public' AND roles = ARRAY['anon']::name[];
+-- Should return 0
+```
+Full detail: see Authentication & Authorization section above.
 
 ---
 
