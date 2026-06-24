@@ -118,6 +118,19 @@ const MonthlyCloseWidget = ({ data, onNavigate }) => {
   const checklist = data.closeChecklist || [];
   const monthName = (y, m) => new Date(y, m-1, 1).toLocaleDateString("en-US",{month:"short", year:"numeric"});
   const monthLong = (y, m) => new Date(y, m-1, 1).toLocaleDateString("en-US",{month:"long", year:"numeric"});
+  // The checklist's period_month is the month in which docs are DUE; the books being
+  // closed are the PRIOR calendar month. Display the closing month so the widget reads
+  // intuitively (e.g., period 2026/7 → "Monthly Close — June 2026").
+  const closingMonthLong = (y, m) => {
+    const cy = m === 1 ? y - 1 : y;
+    const cm = m === 1 ? 12    : m - 1;
+    return monthLong(cy, cm);
+  };
+  const closingMonthShort = (y, m) => {
+    const cy = m === 1 ? y - 1 : y;
+    const cm = m === 1 ? 12    : m - 1;
+    return monthName(cy, cm);
+  };
 
   // Group rows by year-month
   const groups = {};
@@ -154,7 +167,7 @@ const MonthlyCloseWidget = ({ data, onNavigate }) => {
 
   return (
     <Card>
-      <SectionTitle icon="📅" title={`Monthly Close — ${monthLong(current.year, current.month)}`}
+      <SectionTitle icon="📅" title={`Monthly Close — ${closingMonthLong(current.year, current.month)}`}
         action={<button onClick={()=>onNavigate("documents")} style={{fontSize:11,color:T.blue,background:"none",border:"none",cursor:"pointer",fontWeight:600}}>View All →</button>}
       />
 
@@ -202,7 +215,7 @@ const MonthlyCloseWidget = ({ data, onNavigate }) => {
             {closedMonths.map((p, i) => (
               <div key={i} style={{display:"flex", alignItems:"center", gap:5, padding:"3px 8px", borderRadius:12, background:T.green, color:"#fff", fontSize:10, fontWeight:600}}>
                 <span>✓</span>
-                <span>{monthName(p.year, p.month)}</span>
+                <span>{closingMonthShort(p.year, p.month)}</span>
                 <span style={{opacity:0.75, fontSize:9, fontWeight:500}}>{p.items.length}/{p.items.length}</span>
               </div>
             ))}
