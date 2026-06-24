@@ -758,7 +758,13 @@ const StaffDirectory = ({ staff, onUpdated }) => {
                   )}
                 </div>
                 <div style={{ fontSize:12, color:T.slate500 }}>
-                  {member.role} · {member.employment_type === "w2" ? "W-2 Employee" : member.employment_type === "family" ? "Family Employee (W-2)" : "1099 Contractor"} · Since {member.start_date}
+                  {member.role} · {({
+                    "w2":         "W-2 Employee",
+                    "owner_w2":   "Owner W-2 (S-Corp)",
+                    "family":     "Family Employee (W-2)",
+                    "1099":       "1099 Contractor",
+                    "apprentice": "Apprentice",
+                  }[member.employment_type] || (member.employment_type ? member.employment_type.replace(/_/g," ") : "Employment type not set"))} · Since {member.start_date}
                 </div>
               </div>
 
