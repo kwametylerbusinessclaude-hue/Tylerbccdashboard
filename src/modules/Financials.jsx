@@ -1049,9 +1049,333 @@ const GLSection = ({ data }) => (
 );
 
 // ─── Main Financials Module ───────────────────────────────────
+// ============================================================
+// FULL FINANCIAL REPORT — Item 1 (Kwame request 2026-06-24)
+// Print button generates a 4-comparison printable report:
+//   1. MoM vs PY same month
+//   2. YTD vs PY same period
+//   3. Quarter vs PY same quarter
+//   4. QTD vs PY same period
+// Reads from v_income_statement (unified pre+post cutover view).
+// ============================================================
+
+// Return YYYY-MM-DD for first/last of month for a given Date.
+function monthRange(year, month /* 1-12 */) {
+  const start = new Date(Date.UTC(year, month - 1, 1));
+  const end = new Date(Date.UTC(year, month, 0));
+  const iso = (d) => d.toISOString().slice(0, 10);
+  return { start: iso(start), end: iso(end) };
+}
+
+// Return YYYY-MM-DD for first-of-quarter / last-of-period through month for a given year/month.
+function quarterRange(year, month /* 1-12 */, throughMonth /* 1-12 */) {
+  const qStart = Math.floor((month - 1) / 3) * 3 + 1;
+  const start = new Date(Date.UTC(year, qStart - 1, 1));
+  const end = new Date(Date.UTC(year, throughMonth, 0));
+  const iso = (d) => d.toISOString().slice(0, 10);
+  return { start: iso(start), end: iso(end) };
+}
+
+function ytdRange(year, throughMonth /* 1-12 */) {
+  const start = new Date(Date.UTC(year, 0, 1));
+  const end = new Date(Date.UTC(year, throughMonth, 0));
+  const iso = (d) => d.toISOString().slice(0, 10);
+  return { start: iso(start), end: iso(end) };
+}
+
+const MONTH_LABEL = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+// Pull two years of income statement rows + agency name. Returns { rows, agencyName, cutover }.
+async function fetchReportSource(asOfDate) {
+  const asOf = asOfDate instanceof Date ? asOfDate : new Date(asOfDate);
+  const currentYear = asOf.getUTCFullYear();
+  const startISO = `${currentYear - 1}-01-01`;
+  const endISO = asOf.toISOString().slice(0, 10);
+
+  const [{ data: rows = [] } = { data: [] }, { data: agency = [] } = { data: [] }, { data: settings = [] } = { data: [] }] = await Promise.all([
+    supabase.from("v_income_statement")
+      .select("year, month, period_date, account_id, account_code, account_name, account_type, account_subtype, amount")
+      .gte("period_date", startISO)
+      .lte("period_date", endISO)
+      .order("period_date", { ascending: true }),
+    supabase.from("agency").select("name").limit(1),
+    supabase.from("settings").select("setting_key, setting_value").in("setting_key", ["gl_cutover_date"]),
+  ]);
+
+  const agencyName = (agency && agency[0] && agency[0].name) || "Tyler Insurance and Financial Services LLC";
+  const cutover = ((settings || []).find((s) => s.setting_key === "gl_cutover_date") || {}).setting_value || "2026-04-30";
+  return { rows: rows || [], agencyName, cutover };
+}
+
+// Aggregate rows for an inclusive [startISO, endISO] window into {byAccount, totals}.
+function aggregateWindow(rows, startISO, endISO) {
+  const byAccount = new Map();
+  let totalIncome = 0;
+  let totalExpense = 0;
+  for (const r of rows) {
+    const pd = r.period_date;
+    if (!pd || pd < startISO || pd > endISO) continue;
+    const key = r.account_id || `${r.account_code}|${r.account_name}`;
+    const amount = parseFloat(r.amount || 0);
+    const existing = byAccount.get(key) || {
+      account_id: r.account_id,
+      account_code: r.account_code || "",
+      account_name: r.account_name || "(unnamed)",
+      account_type: r.account_type,
+      account_subtype: r.account_subtype || "other",
+      amount: 0,
+    };
+    existing.amount += amount;
+    byAccount.set(key, existing);
+    if (r.account_type === "income") totalIncome += amount;
+    else if (r.account_type === "expense") totalExpense += amount;
+  }
+  return {
+    byAccount: Array.from(byAccount.values()),
+    totalIncome,
+    totalExpense,
+    netIncome: totalIncome - totalExpense,
+  };
+}
+
+// Build one comparison view: current window vs prior window.
+function buildComparison(label, rows, currISO, priorISO, lineageNote = "") {
+  const curr = aggregateWindow(rows, currISO.start, currISO.end);
+  const prior = aggregateWindow(rows, priorISO.start, priorISO.end);
+
+  // Union account list across both periods, group by account_type then subtype.
+  const allKeys = new Map();
+  for (const a of curr.byAccount) allKeys.set(a.account_id || a.account_code, a);
+  for (const a of prior.byAccount) {
+    const k = a.account_id || a.account_code;
+    if (!allKeys.has(k)) allKeys.set(k, { ...a, amount: 0 });
+  }
+
+  const accounts = Array.from(allKeys.values()).map((meta) => {
+    const c = curr.byAccount.find((x) => (x.account_id || x.account_code) === (meta.account_id || meta.account_code));
+    const p = prior.byAccount.find((x) => (x.account_id || x.account_code) === (meta.account_id || meta.account_code));
+    const cAmt = c ? c.amount : 0;
+    const pAmt = p ? p.amount : 0;
+    return {
+      code: meta.account_code,
+      name: meta.account_name,
+      type: meta.account_type,
+      subtype: meta.account_subtype || "other",
+      curr: cAmt,
+      prior: pAmt,
+      delta: cAmt - pAmt,
+      pctDelta: pAmt !== 0 ? ((cAmt - pAmt) / Math.abs(pAmt)) * 100 : null,
+    };
+  });
+
+  // Sort: income first (by code asc), then expense (by code asc)
+  accounts.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "income" ? -1 : 1;
+    return (a.code || "").localeCompare(b.code || "");
+  });
+
+  return {
+    label,
+    lineageNote,
+    currLabel: `${currISO.start} to ${currISO.end}`,
+    priorLabel: `${priorISO.start} to ${priorISO.end}`,
+    accounts,
+    totals: {
+      currIncome: curr.totalIncome,
+      priorIncome: prior.totalIncome,
+      currExpense: curr.totalExpense,
+      priorExpense: prior.totalExpense,
+      currNet: curr.netIncome,
+      priorNet: prior.netIncome,
+      deltaIncome: curr.totalIncome - prior.totalIncome,
+      deltaExpense: curr.totalExpense - prior.totalExpense,
+      deltaNet: curr.netIncome - prior.netIncome,
+    },
+  };
+}
+
+// buildFullReport(asOfDate) — returns { asOfDate, agencyName, comparisons[4] }
+async function buildFullReport(asOfDate) {
+  const asOf = asOfDate instanceof Date ? asOfDate : new Date(asOfDate);
+  const y = asOf.getUTCFullYear();
+  const m = asOf.getUTCMonth() + 1;
+  const { rows, agencyName, cutover } = await fetchReportSource(asOf);
+
+  const cutoverDate = cutover; // YYYY-MM-DD
+
+  const comparisons = [
+    buildComparison(
+      `Month: ${MONTH_LABEL[m - 1]} ${y} vs ${MONTH_LABEL[m - 1]} ${y - 1}`,
+      rows,
+      monthRange(y, m),
+      monthRange(y - 1, m),
+      `Current month posted via live BCC GL (post-cutover ${cutoverDate}). Prior year same month is CPA-prepared monthly P&L (pre-cutover).`
+    ),
+    buildComparison(
+      `YTD: Jan-${MONTH_LABEL[m - 1]} ${y} vs Jan-${MONTH_LABEL[m - 1]} ${y - 1}`,
+      rows,
+      ytdRange(y, m),
+      ytdRange(y - 1, m),
+      `YTD blends CPA pre-cutover data (through ${cutoverDate}) with live BCC GL postings (post-cutover). Prior year is CPA-prepared throughout.`
+    ),
+    (function quarterCmp() {
+      const qNum = Math.ceil(m / 3);
+      const qStart = (qNum - 1) * 3 + 1;
+      const qEnd = qNum * 3;
+      return buildComparison(
+        `Quarter: Q${qNum} ${y} vs Q${qNum} ${y - 1}`,
+        rows,
+        { start: monthRange(y, qStart).start, end: monthRange(y, qEnd).end },
+        { start: monthRange(y - 1, qStart).start, end: monthRange(y - 1, qEnd).end },
+        `Full-quarter comparison. Current Q${qNum} ${y} may include partially-closed months.`
+      );
+    })(),
+    buildComparison(
+      `QTD: Q${Math.ceil(m / 3)}-to-date ${y} vs same window ${y - 1}`,
+      rows,
+      quarterRange(y, m, m),
+      quarterRange(y - 1, m, m),
+      `Quarter-to-date through ${MONTH_LABEL[m - 1]}. Apples-to-apples month window vs prior year.`
+    ),
+  ];
+
+  return {
+    asOfDate: asOf.toISOString().slice(0, 10),
+    agencyName,
+    cutoverDate,
+    comparisons,
+  };
+}
+
+// generatePrintHtml(report) — returns a complete HTML document string.
+function generatePrintHtml(report) {
+  const fmtMoney = (n) => {
+    const v = Number(n) || 0;
+    const abs = Math.abs(v);
+    const formatted = "$" + abs.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return v < 0 ? `(${formatted})` : formatted;
+  };
+  const fmtPct = (n) => {
+    if (n === null || n === undefined || !Number.isFinite(n)) return "—";
+    const sign = n > 0 ? "+" : "";
+    return `${sign}${n.toFixed(1)}%`;
+  };
+  const escapeHtml = (s) => String(s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  const renderComparison = (cmp) => {
+    const incomeAccts = cmp.accounts.filter((a) => a.type === "income" && (a.curr !== 0 || a.prior !== 0));
+    const expenseAccts = cmp.accounts.filter((a) => a.type === "expense" && (a.curr !== 0 || a.prior !== 0));
+    const row = (a) => `
+      <tr>
+        <td class="acct">${escapeHtml(a.code)} ${escapeHtml(a.name)}</td>
+        <td class="num">${fmtMoney(a.curr)}</td>
+        <td class="num">${fmtMoney(a.prior)}</td>
+        <td class="num ${a.delta >= 0 ? "pos" : "neg"}">${fmtMoney(a.delta)}</td>
+        <td class="num ${a.pctDelta !== null && a.pctDelta >= 0 ? "pos" : "neg"}">${fmtPct(a.pctDelta)}</td>
+      </tr>`;
+    const incomeRows = incomeAccts.map(row).join("");
+    const expenseRows = expenseAccts.map(row).join("");
+    const t = cmp.totals;
+    const netPct = t.priorNet !== 0 ? ((t.deltaNet / Math.abs(t.priorNet)) * 100) : null;
+    const incPct = t.priorIncome !== 0 ? ((t.deltaIncome / Math.abs(t.priorIncome)) * 100) : null;
+    const expPct = t.priorExpense !== 0 ? ((t.deltaExpense / Math.abs(t.priorExpense)) * 100) : null;
+    return `
+      <section class="cmp">
+        <h2>${escapeHtml(cmp.label)}</h2>
+        <p class="lineage">${escapeHtml(cmp.lineageNote)}</p>
+        <table>
+          <thead>
+            <tr>
+              <th class="acct">Account</th>
+              <th class="num">${escapeHtml(cmp.currLabel)}</th>
+              <th class="num">${escapeHtml(cmp.priorLabel)}</th>
+              <th class="num">$ Variance</th>
+              <th class="num">% Variance</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="group"><td colspan="5">REVENUE</td></tr>
+            ${incomeRows || '<tr><td colspan="5" class="empty">No revenue activity in either period.</td></tr>'}
+            <tr class="subtotal">
+              <td class="acct">Total Revenue</td>
+              <td class="num">${fmtMoney(t.currIncome)}</td>
+              <td class="num">${fmtMoney(t.priorIncome)}</td>
+              <td class="num ${t.deltaIncome >= 0 ? "pos" : "neg"}">${fmtMoney(t.deltaIncome)}</td>
+              <td class="num ${incPct !== null && incPct >= 0 ? "pos" : "neg"}">${fmtPct(incPct)}</td>
+            </tr>
+            <tr class="group"><td colspan="5">OPERATING EXPENSES</td></tr>
+            ${expenseRows || '<tr><td colspan="5" class="empty">No expense activity in either period.</td></tr>'}
+            <tr class="subtotal">
+              <td class="acct">Total Expenses</td>
+              <td class="num">${fmtMoney(t.currExpense)}</td>
+              <td class="num">${fmtMoney(t.priorExpense)}</td>
+              <td class="num ${t.deltaExpense <= 0 ? "pos" : "neg"}">${fmtMoney(t.deltaExpense)}</td>
+              <td class="num ${expPct !== null && expPct <= 0 ? "pos" : "neg"}">${fmtPct(expPct)}</td>
+            </tr>
+            <tr class="net">
+              <td class="acct">NET INCOME</td>
+              <td class="num">${fmtMoney(t.currNet)}</td>
+              <td class="num">${fmtMoney(t.priorNet)}</td>
+              <td class="num ${t.deltaNet >= 0 ? "pos" : "neg"}">${fmtMoney(t.deltaNet)}</td>
+              <td class="num ${netPct !== null && netPct >= 0 ? "pos" : "neg"}">${fmtPct(netPct)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>`;
+  };
+
+  const styles = `
+    @page { size: letter; margin: 0.5in 0.5in 0.5in 0.5in; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; color: #1B2B4B; margin: 0; padding: 16px; font-size: 11px; }
+    header.report { border-bottom: 2px solid #1B2B4B; padding-bottom: 10px; margin-bottom: 14px; }
+    header.report h1 { margin: 0 0 4px 0; font-size: 18px; }
+    header.report .meta { font-size: 10px; color: #64748B; }
+    header.report .lineage { font-size: 9px; color: #64748B; margin-top: 6px; font-style: italic; }
+    section.cmp { page-break-after: always; }
+    section.cmp:last-child { page-break-after: auto; }
+    section.cmp h2 { font-size: 14px; margin: 0 0 4px 0; padding-bottom: 4px; border-bottom: 1px solid #CBD5E1; }
+    section.cmp p.lineage { font-size: 9px; color: #64748B; font-style: italic; margin: 0 0 10px 0; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 4px 6px; text-align: left; vertical-align: top; }
+    th { background: #F1F5F9; font-size: 10px; font-weight: 600; border-bottom: 1px solid #94A3B8; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    tr.group td { background: #1B2B4B; color: #fff; font-weight: 600; padding: 4px 6px; font-size: 10px; letter-spacing: 0.04em; }
+    tr.subtotal td { border-top: 1px solid #94A3B8; background: #F8FAFC; font-weight: 600; }
+    tr.net td { border-top: 2px solid #1B2B4B; background: #EFF6FF; font-weight: 700; font-size: 12px; padding: 8px 6px; }
+    td.empty { text-align: center; color: #94A3B8; font-style: italic; padding: 8px; }
+    td.acct { width: 38%; }
+    td.pos { color: #047857; }
+    td.neg { color: #B91C1C; }
+    footer.report { margin-top: 14px; padding-top: 8px; border-top: 1px solid #CBD5E1; font-size: 9px; color: #64748B; text-align: center; }
+    @media print { body { padding: 0; } .no-print { display: none; } }
+  `;
+
+  const head = `
+    <header class="report">
+      <h1>${escapeHtml(report.agencyName)}</h1>
+      <div class="meta">Full Financial Report &mdash; As of ${escapeHtml(report.asOfDate)}</div>
+      <div class="meta">Cash basis &middot; All figures in USD</div>
+      <p class="lineage">
+        DATA LINEAGE: Periods through ${escapeHtml(report.cutoverDate)} reflect CPA-prepared monthly P&amp;L (income-tax basis).
+        Periods after ${escapeHtml(report.cutoverDate)} reflect live BCC General Ledger postings (cash basis).
+        The unified view (v_income_statement) blends both sources at the account level so year-over-year comparisons are apples-to-apples at the account-type level.
+      </p>
+    </header>`;
+
+  const body = report.comparisons.map(renderComparison).join("\n");
+  const foot = `<footer class="report">Generated by Business Command Center &middot; ${escapeHtml(report.agencyName)} &middot; ${escapeHtml(new Date().toISOString())}</footer>`;
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Full Financial Report &mdash; ${escapeHtml(report.asOfDate)}</title><style>${styles}</style></head><body>${head}${body}${foot}<script>window.addEventListener("load",function(){setTimeout(function(){window.print();},250);});</script></body></html>`;
+}
+
+
+
 export default function Financials() {
   const [section, setSection] = useState("overview");
   const [period, setPeriod] = useState("mtd");
+  const [printing, setPrinting] = useState(false);
+  const [printError, setPrintError] = useState(null);
   const { data: liveData, loading } = useFinancialsData();
   if (liveData) MOCK = liveData;
 
@@ -1066,6 +1390,37 @@ export default function Financials() {
     { id: "gl",        label: "General Ledger"  },
   ];
 
+  async function handlePrintFullReport() {
+    if (printing) return;
+    setPrinting(true);
+    setPrintError(null);
+    // Open a blank window synchronously so the popup blocker is happy.
+    const win = window.open("", "_blank", "width=900,height=1100");
+    if (!win) {
+      setPrinting(false);
+      setPrintError("Pop-up blocked. Allow pop-ups for this site to print the report.");
+      return;
+    }
+    win.document.write('<!DOCTYPE html><html><head><title>Generating report...</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:40px;color:#1B2B4B}</style></head><body><h2>Generating Full Financial Report...</h2><p>Pulling 24 months of data from v_income_statement. This usually takes a few seconds.</p></body></html>');
+    try {
+      const report = await buildFullReport(new Date());
+      const html = generatePrintHtml(report);
+      win.document.open();
+      win.document.write(html);
+      win.document.close();
+    } catch (e) {
+      console.error("Print report error:", e);
+      setPrintError(e && e.message ? e.message : String(e));
+      try {
+        win.document.open();
+        win.document.write('<!DOCTYPE html><html><body style="font-family:sans-serif;padding:40px;color:#B91C1C"><h2>Report generation failed</h2><pre>' + String((e && e.message) || e) + '</pre><p>Please report this in chat. The session log will have the full error.</p></body></html>');
+        win.document.close();
+      } catch (_) { /* noop */ }
+    } finally {
+      setPrinting(false);
+    }
+  }
+
   return (
     <div>
       {/* Module Header */}
@@ -1075,8 +1430,27 @@ export default function Financials() {
           <div style={{ fontSize: 12, color: T.slate500, marginTop: 3 }}>
             Cash basis · Calendar year · All figures in USD
           </div>
+          {printError && (
+            <div style={{ fontSize: 11, color: T.red, marginTop: 4 }}>Print error: {printError}</div>
+          )}
         </div>
-        <AskBtn context="I am reviewing my agency financials. Help me get a complete picture of my financial health, identify any concerns, and suggest what I should focus on." />
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button
+            onClick={handlePrintFullReport}
+            disabled={printing}
+            title="Generate a printable Full Financial Report with 4 comparison views (Month, YTD, Quarter, QTD vs prior year)"
+            style={{
+              padding: "8px 14px", fontSize: 12, fontWeight: 600,
+              color: T.white, background: printing ? T.slate500 : T.navy,
+              border: "none", borderRadius: 7, cursor: printing ? "wait" : "pointer",
+              boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+              transition: "all 0.12s",
+            }}
+          >
+            {printing ? "Building report..." : "🖨️  Print Full Report"}
+          </button>
+          <AskBtn context="I am reviewing my agency financials. Help me get a complete picture of my financial health, identify any concerns, and suggest what I should focus on." />
+        </div>
       </div>
 
       {/* Section Navigation */}
