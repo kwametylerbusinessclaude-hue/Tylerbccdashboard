@@ -109,8 +109,17 @@ const Toggle = ({ value, onChange }) => (
 );
 
 const FieldRow = ({ label, value, editable=false, onChange, type="text", hint }) => {
+  // Display value is always the live prop so async-loaded data refreshes the UI.
+  // Local `val` is initialized lazily when the user enters edit mode.
   const [editing, setEditing] = useState(false);
-  const [val, setVal] = useState(value);
+  const [val, setVal] = useState("");
+
+  const display = (value === null || value === undefined || value === "") ? "—" : String(value);
+
+  const startEdit = () => {
+    setVal(value === null || value === undefined ? "" : String(value));
+    setEditing(true);
+  };
 
   return (
     <div style={{ display:"flex", alignItems:"flex-start", gap:12, padding:"11px 0", borderBottom:`1px solid ${T.slate100}` }}>
@@ -125,14 +134,14 @@ const FieldRow = ({ label, value, editable=false, onChange, type="text", hint })
               style={{ flex:1, padding:"6px 10px", fontSize:12, color:T.slate800, border:`1px solid ${T.blue}`, borderRadius:7, outline:"none" }} />
             <button onClick={() => { onChange?.(val); setEditing(false); }}
               style={{ padding:"6px 12px", fontSize:11, fontWeight:600, color:T.white, background:T.navy, border:"none", borderRadius:7, cursor:"pointer" }}>Save</button>
-            <button onClick={() => { setVal(value); setEditing(false); }}
+            <button onClick={() => { setEditing(false); }}
               style={{ padding:"6px 10px", fontSize:11, color:T.slate500, background:T.slate100, border:"none", borderRadius:7, cursor:"pointer" }}>Cancel</button>
           </div>
         ) : (
           <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-            <span style={{ fontSize:12, color:T.slate600 }}>{val || "—"}</span>
+            <span style={{ fontSize:12, color:T.slate600 }}>{display}</span>
             {editable && (
-              <button onClick={() => setEditing(true)}
+              <button onClick={startEdit}
                 style={{ fontSize:10, color:T.blue, background:"none", border:`1px solid ${T.slate200}`, borderRadius:6, padding:"3px 8px", cursor:"pointer" }}>Edit</button>
             )}
           </div>
@@ -205,12 +214,12 @@ const AgencyProfile = ({ agency }) => (
     <FieldRow label="Owner Name"        value={agency.owner_name}                                     editable />
     <FieldRow label="Entity Type"       value={agency.entity_type}                                    />
     <FieldRow label="EIN / Tax ID"      value={agency.tax_id}       hint="Stored encrypted"          />
-    <FieldRow label="SF Agent Code"     value={agency.sf_agent_code}                                  />
+    <FieldRow label="SF Agent Code"     value={agency.state_farm_agent_code}                          />
     <FieldRow label="Licensed States"   value={(agency.licensing_states || []).join(", ")}                   editable />
     <FieldRow label="Primary Email"     value={agency.primary_email} hint="Personal — not @statefarm.com" editable />
     <FieldRow label="Phone"             value={agency.phone}                                          editable />
     <FieldRow label="Address"           value={agency.address}                                        editable />
-    <FieldRow label="Google Account"    value={agency.google_account} hint="Ties Vercel, Supabase, Composio" />
+    <FieldRow label="Google Account"    value={agency.google_account_email} hint="Ties Vercel, Supabase, Composio" />
     <FieldRow label="BCC URL"           value={agency.vercel_url}    hint="Your permanent BCC address" />
     <FieldRow label="Setup Date"        value={agency.setup_date}    />
   </Card>
@@ -271,7 +280,7 @@ const TeamAccess = ({ users }) => {
             <div key={user.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 0", borderBottom:isLast?"none":`1px solid ${T.slate100}` }}>
               {/* Avatar */}
               <div style={{ width:36, height:36, borderRadius:10, background:user.is_current?T.navy:T.slate200, display:"flex", alignItems:"center", justifyContent:"center", fontSize:12, fontWeight:700, color:user.is_current?T.white:T.slate500, flexShrink:0 }}>
-                {user.name.split(" ").map(n=>n[0]).join("").slice(0,2)}
+                {(user.name || "?").split(" ").map(n=>n && n[0]).filter(Boolean).join("").slice(0,2) || "?"}
               </div>
 
               <div style={{ flex:1 }}>
@@ -899,7 +908,13 @@ export default function Settings() {
 
       {/* Section Content */}
       {section === "profile"     && <AgencyProfile      agency={agencyData || {}} />}
-      {section === "team"        && <TeamAccess         users={usersData || []} />}
+      {section === "team"        && <TeamAccess         users={(usersData || []).map(u => ({
+        ...u,
+        name: u.full_name || u.email || "(no name)",
+        is_current: !!(agencyData && u.email === agencyData.primary_email),
+        pending: !u.last_login,
+        last_login: u.last_login ? new Date(u.last_login).toLocaleDateString() : "Never",
+      }))} />}
       {section === "connections" && <ConnectedAccounts  connections={connections} />}
       {section === "config"      && <BCCConfiguration   config={config} />}
       {section === "about"       && <About              agency={agencyData || {}} />}
