@@ -779,6 +779,13 @@ const StaffDirectory = ({ staff, onUpdated }) => {
                 <div style={{ fontSize:10, color:T.slate400 }}>{(member.pay_type || "rate not set").replace(/_/g," ")}</div>
               </div>
 
+              <button
+                onClick={(e) => { e.stopPropagation(); setEditing(member); }}
+                title="Edit this staff member"
+                style={{ padding:"6px 12px", borderRadius:6, border:`1px solid ${T.blue}`, background:T.white, color:T.blue, fontSize:11, fontWeight:700, cursor:"pointer", letterSpacing:0.2, flexShrink:0 }}
+              >
+                ✏ Edit
+              </button>
               <span style={{ color:T.slate400, fontSize:12 }}>{isExpanded?"▲":"▼"}</span>
             </div>
 
@@ -807,15 +814,7 @@ const StaffDirectory = ({ staff, onUpdated }) => {
                     ⚠ {member.compliance_flag}
                   </div>
                 )}
-                <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setEditing(member); }}
-                    style={{ padding:"7px 14px", borderRadius:6, border:`1px solid ${T.blue}`, background:T.white, color:T.blue, fontSize:11, fontWeight:700, cursor:"pointer", letterSpacing:0.2 }}
-                  >
-                    ✏ Edit
-                  </button>
-                  <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name} ${member.last_name}\nRole: ${member.role}\nEmployment: ${member.employment_type}\nPay: ${member.pay_rate == null ? "rate not set" : (member.pay_type==="hourly" ? ("$"+member.pay_rate+"/hr") : ("$"+Number(member.pay_rate).toLocaleString()+"/yr"))}\nLicensed: ${member.licensed?"Yes — "+(Array.isArray(member.license_states)?member.license_states.join(", "):"(states not on file)"):"No"}\nStart: ${member.start_date}\nNotes: ${member.notes}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
-                </div>
+                <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name} ${member.last_name}\nRole: ${member.role}\nEmployment: ${member.employment_type}\nPay: ${member.pay_rate == null ? "rate not set" : (member.pay_type==="hourly" ? ("$"+member.pay_rate+"/hr") : ("$"+Number(member.pay_rate).toLocaleString()+"/yr"))}\nLicensed: ${member.licensed?"Yes — "+(Array.isArray(member.license_states)?member.license_states.join(", "):"(states not on file)"):"No"}\nStart: ${member.start_date}\nNotes: ${member.notes}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
               </div>
             )}
           </Card>
