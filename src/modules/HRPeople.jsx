@@ -645,7 +645,7 @@ const StaffDirectory = ({ staff }) => {
                     ⚠ {member.compliance_flag}
                   </div>
                 )}
-                <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name} ${member.last_name}\nRole: ${member.role}\nEmployment: ${member.employment_type}\nPay: ${member.pay_type} — ${member.pay_type==="hourly"?"$"+member.pay_rate+"/hr":"$"+member.pay_rate.toLocaleString()+"/yr"}\nLicensed: ${member.licensed?"Yes — "+(Array.isArray(member.license_states)?member.license_states.join(", "):"(states not on file)"):"No"}\nStart: ${member.start_date}\nNotes: ${member.notes}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
+                <AskBtn size="small" context={`Staff member profile:\nName: ${member.first_name} ${member.last_name}\nRole: ${member.role}\nEmployment: ${member.employment_type}\nPay: ${member.pay_rate == null ? "rate not set" : (member.pay_type==="hourly" ? ("$"+member.pay_rate+"/hr") : ("$"+Number(member.pay_rate).toLocaleString()+"/yr"))}\nLicensed: ${member.licensed?"Yes — "+(Array.isArray(member.license_states)?member.license_states.join(", "):"(states not on file)"):"No"}\nStart: ${member.start_date}\nNotes: ${member.notes}\n${member.compliance_flag?"Compliance flag: "+member.compliance_flag:""}\n\nHelp me review this team member's profile. Are there any compliance concerns or HR items I should address?`} />
               </div>
             )}
           </Card>
@@ -665,12 +665,33 @@ const OnboardingSection = ({ onboarding }) => {
     training:   { color:T.purple, bg:T.purpleLt },
   };
 
+  // NOTE: This JSX expects onboarding rows shaped as
+  //   { staff_id, staff_name, start_date, days_employed, template, items: [{category, item, completed, due}] }
+  // but the live onboarding_checklists table stores rows FLAT (one row per item:
+  //   id, staff_id, template_type, item_name, category, due_date, completed_at, ...).
+  // Until the data layer normalizes (group by staff_id, hydrate staff_name),
+  // we skip any record that does not present the expected hierarchical shape so
+  // the tab does not crash with `record.items.filter is not a function`.
+  // Tracked for full rewrite: see task created this session.
+  const hierarchical = (onboarding || []).filter(r => Array.isArray(r?.items));
+  if (hierarchical.length === 0) {
+    return (
+      <Card>
+        <div style={{ padding:"20px 0", textAlign:"center", fontSize:13, color:T.slate500 }}>
+          Onboarding checklists are stored as individual items in the database
+          right now (no aggregated view yet). The hierarchical onboarding view is
+          pending a data-normalization pass.
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <div>
-      {onboarding.map(record => {
+      {hierarchical.map(record => {
         const completed = record.items.filter(i => i.completed).length;
         const total = record.items.length;
-        const pctDone = Math.round((completed/total)*100);
+        const pctDone = total > 0 ? Math.round((completed/total)*100) : 0;
         const grouped = record.items.reduce((acc, item) => {
           if (!acc[item.category]) acc[item.category] = [];
           acc[item.category].push(item);
