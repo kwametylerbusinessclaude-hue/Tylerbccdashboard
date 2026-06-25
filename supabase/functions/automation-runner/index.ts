@@ -286,19 +286,84 @@ async function getComposioAuthConfigId(agencyId: string, connection: string): Pr
   return await getSetting(agencyId, `composio_${connection.toLowerCase()}_auth_config_id`);
 }
 
+async function prefetchCalendarEvents(agencyId: string): Promise<any[]> {
+  // Fail-soft: any error returns [] so the briefing still sends.
+  try {
+    const composioApiKey = Deno.env.get("COMPOSIO_API_KEY") || await getSetting(agencyId, "composio_api_key");
+    const composioUserId = await getSetting(agencyId, "composio_user_id");
+    const calAuthConfigId = await getSetting(agencyId, "composio_googlecalendar_auth_config_id");
+    if (!composioApiKey || !composioUserId) {
+      console.warn("[prefetchCalendarEvents] Missing composio creds; returning []");
+      return [];
+    }
+    const HOLIDAYS_CAL = "en.usa#holiday@group.v.calendar.google.com";
+    const PRIMARY_CAL  = "primary";
+    const now = new Date();
+    const sevenDays = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const result = await callComposio({
+      apiKey: composioApiKey,
+      userId: composioUserId,
+      authConfigId: calAuthConfigId,
+      toolSlug: "GOOGLECALENDAR_EVENTS_LIST_ALL_CALENDARS",
+      toolArguments: {
+        time_min: now.toISOString(),
+        time_max: sevenDays.toISOString(),
+        calendar_ids: [PRIMARY_CAL, HOLIDAYS_CAL],
+        single_events: true,
+        response_detail: "full",
+        max_results_per_calendar: 50,
+      },
+    });
+    if (!result.ok) {
+      console.warn(`[prefetchCalendarEvents] Composio call failed: ${result.error}`);
+      return [];
+    }
+    const rows: any[] = (result.data as any)?.events || [];
+    const normalized: any[] = [];
+    for (const row of rows) {
+      const ev = (row || {}).event || {};
+      const st = ev.start || {};
+      const en = ev.end || {};
+      const sourceCal = row.source_calendar_id || "";
+      const isHoliday = sourceCal === HOLIDAYS_CAL;
+      const allDay = !!st.date && !st.dateTime;
+      const startVal = st.dateTime || st.date;
+      const endVal   = en.dateTime || en.date;
+      if (!startVal) continue;
+      normalized.push({
+        start: startVal,
+        end: endVal,
+        summary: ev.summary || "(untitled)",
+        all_day: allDay,
+        is_holiday: isHoliday,
+        location: ev.location || "",
+      });
+    }
+    normalized.sort((a, b) => (a.start < b.start ? -1 : (a.start > b.start ? 1 : 0)));
+    return normalized;
+  } catch (e) {
+    console.warn(`[prefetchCalendarEvents] Threw: ${(e as Error).message}`);
+    return [];
+  }
+}
+
 async function resolveToolArguments(
   agencyId: string,
   inputConfig: Record<string, any>,
 ): Promise<Record<string, any>> {
   const payloadRpc: string | undefined = inputConfig?.payload_rpc;
   if (!payloadRpc) {
-    const { payload_rpc: _a, tz: _b, ...rest } = inputConfig || {};
+    const { payload_rpc: _a, tz: _b, prefetch_calendar_events: _c, ...rest } = inputConfig || {};
     return rest;
   }
   const tz = inputConfig.tz
     || await getSetting(agencyId, "agency_timezone")
     || "America/New_York";
-  const { data, error } = await sb.rpc(payloadRpc, { p_agency_id: agencyId, p_tz: tz });
+  const rpcArgs: Record<string, any> = { p_agency_id: agencyId, p_tz: tz };
+  if (inputConfig?.prefetch_calendar_events === true) {
+    rpcArgs.p_calendar_events = await prefetchCalendarEvents(agencyId);
+  }
+  const { data, error } = await sb.rpc(payloadRpc, rpcArgs);
   if (error) throw new Error(`payload_rpc '${payloadRpc}' failed: ${error.message}`);
   if (!data || typeof data !== "object") throw new Error(`payload_rpc '${payloadRpc}' returned non-object value`);
   return data as Record<string, any>;
