@@ -1,0 +1,329 @@
+/* ==========================================================================
+   BCC Bridge Stylesheet — src/index.css
+   ==========================================================================
+   Bridges the Playbook & Wiki retrofit (which uses className="if-*" and
+   Tailwind-flavor utilities + CSS variables var(--if-*)) to the fork's
+   existing TOKENS palette (defined in BCCApp.jsx as inline JS hex values).
+
+   All pre-existing modules of this fork use inline style props, not classes,
+   so this stylesheet has NO effect on Dashboard / Financials / PersistentMemory
+   / Compliance / Automations / SocialMedia / TasksGoals / Alerts /
+   Documents / HRPeople / Settings. It only styles the two new retrofit
+   modules and the 5 stub components created for them.
+
+   Authored 2026-07-01 in response to IF retrofit's paradigm mismatch.
+   Kept intentionally hand-authored (no Tailwind, no PostCSS) so the fork's
+   build model stays simple: one CSS file, one import in main.jsx.
+   ========================================================================== */
+
+:root {
+  /* Palette — matches TOKENS in BCCApp.jsx */
+  --if-navy:       #1B2B4B;
+  --if-navy-dark:  #121E35;
+  --if-blue:       #2D7DD2;
+  --if-blue-lt:    #EFF6FF;
+  --if-green:      #10B981;
+  --if-green-lt:   #D1FAE5;
+  --if-amber:      #F59E0B;
+  --if-amber-lt:   #FEF3C7;
+  --if-red:        #EF4444;
+  --if-red-lt:     #FEE2E2;
+  --if-slate-50:   #F8FAFC;
+  --if-slate-100:  #F1F5F9;
+  --if-slate-200:  #E2E8F0;
+  --if-slate-400:  #94A3B8;
+  --if-slate-500:  #64748B;
+  --if-slate-700:  #334155;
+  --if-slate-900:  #0F172A;
+
+  /* Semantic aliases (referenced by PlaybookGuide.jsx inline styles) */
+  --if-ink:        var(--if-slate-900);
+  --if-text:       var(--if-slate-700);
+  --if-muted:      var(--if-slate-500);
+  --if-line:       var(--if-slate-200);
+  --if-page:       var(--if-slate-50);
+  --if-card:       #FFFFFF;
+  --if-surface:    #FFFFFF;
+  --if-accent:     var(--if-blue);
+  --if-accent-soft:var(--if-blue-lt);
+  --if-warning:    #B45309;
+  --if-warning-lt: var(--if-amber-lt);
+  --if-coral:      #F87171;
+  --if-coral-lt:   var(--if-red-lt);
+  --if-cream:      #FFFBEB;
+}
+
+/* ==========================================================================
+   IF component classes
+   ========================================================================== */
+
+.if-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #FFFFFF;
+  background: var(--if-blue);
+  border: 1px solid var(--if-blue);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  font-family: inherit;
+}
+.if-button:hover:not(:disabled) { background: #256DBC; border-color: #256DBC; }
+.if-button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.if-button-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--if-slate-700);
+  background: #FFFFFF;
+  border: 1px solid var(--if-line);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  font-family: inherit;
+}
+.if-button-ghost:hover:not(:disabled) { background: var(--if-slate-100); border-color: var(--if-slate-400); }
+.if-button-ghost:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.if-card {
+  background: var(--if-card);
+  border: 1px solid var(--if-line);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.if-input {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--if-line);
+  font-size: 13px;
+  color: var(--if-slate-700);
+  background: #FFFFFF;
+  font-family: inherit;
+}
+.if-input:focus { outline: 2px solid var(--if-blue); outline-offset: -2px; }
+
+@media print { .if-no-print { display: none !important; } }
+
+/* ==========================================================================
+   IF color utility classes
+   ========================================================================== */
+
+.text-if-navy    { color: var(--if-navy); }
+.text-if-blue    { color: var(--if-blue); }
+.text-if-ink     { color: var(--if-ink); }
+.text-if-muted   { color: var(--if-muted); }
+.text-if-warning { color: var(--if-warning); }
+
+.bg-if-page      { background-color: var(--if-page); }
+.bg-if-card      { background-color: var(--if-card); }
+
+.border-if-line  { border-color: var(--if-line); }
+.border-if-blue  { border-color: var(--if-blue); }
+
+.hover\:bg-if-blue-lt:hover    { background-color: var(--if-blue-lt); }
+.hover\:bg-if-page:hover       { background-color: var(--if-page); }
+.hover\:border-if-blue:hover   { border-color: var(--if-blue); }
+
+/* ==========================================================================
+   Tailwind-flavor utility classes
+   ONLY the ones SystemMap.jsx + PlaybookGuide.jsx actually use.
+   ========================================================================== */
+
+/* Display */
+.block        { display: block; }
+.flex         { display: flex; }
+.inline-flex  { display: inline-flex; }
+.grid         { display: grid; }
+
+/* Flexbox */
+.flex-1          { flex: 1 1 0%; }
+.flex-shrink-0   { flex-shrink: 0; }
+.flex-wrap       { flex-wrap: wrap; }
+.flex-col        { flex-direction: column; }
+.items-start     { align-items: flex-start; }
+.items-center    { align-items: center; }
+.justify-between { justify-content: space-between; }
+.justify-center  { justify-content: center; }
+.justify-end     { justify-content: flex-end; }
+
+/* Grid */
+.grid-cols-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
+.grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 768px)  { .md\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .lg\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* Gap */
+.gap-1 { gap: 4px; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+
+/* Space-between (vertical) */
+.space-y-1 > * + * { margin-top: 4px; }
+.space-y-2 > * + * { margin-top: 8px; }
+.space-y-3 > * + * { margin-top: 12px; }
+
+/* Positioning */
+.absolute   { position: absolute; }
+.relative   { position: relative; }
+.fixed      { position: fixed; }
+.inset-0    { top: 0; right: 0; bottom: 0; left: 0; }
+.top-2\.5   { top: 10px; }
+.left-2\.5  { left: 10px; }
+.z-50       { z-index: 50; }
+
+/* Sizing */
+.w-full             { width: 100%; }
+.min-w-0            { min-width: 0; }
+.min-h-0            { min-height: 0; }
+.max-w-3xl          { max-width: 768px; }
+.max-h-64           { max-height: 256px; }
+.max-h-\[85vh\]     { max-height: 85vh; }
+
+/* Margin */
+.mb-1     { margin-bottom: 4px; }
+.mb-2     { margin-bottom: 8px; }
+.mb-3     { margin-bottom: 12px; }
+.mb-4     { margin-bottom: 16px; }
+.mb-6     { margin-bottom: 24px; }
+.mt-0\.5  { margin-top: 2px; }
+.mt-1     { margin-top: 4px; }
+.mt-6     { margin-top: 24px; }
+.my-2     { margin-top: 8px;  margin-bottom: 8px; }
+.my-3     { margin-top: 12px; margin-bottom: 12px; }
+.ml-1\.5  { margin-left: 6px; }
+.ml-3     { margin-left: 12px; }
+.mr-1     { margin-right: 4px; }
+
+/* Padding */
+.p-4      { padding: 16px; }
+.py-0\.5  { padding-top: 2px; padding-bottom: 2px; }
+.py-1     { padding-top: 4px; padding-bottom: 4px; }
+.py-1\.5  { padding-top: 6px; padding-bottom: 6px; }
+.py-2     { padding-top: 8px; padding-bottom: 8px; }
+.pl-3     { padding-left: 12px; }
+.pl-5     { padding-left: 20px; }
+.pl-8     { padding-left: 32px; }
+.pr-3     { padding-right: 12px; }
+.pt-3     { padding-top: 12px; }
+.px-1     { padding-left: 4px;  padding-right: 4px; }
+.px-1\.5  { padding-left: 6px;  padding-right: 6px; }
+.px-2     { padding-left: 8px;  padding-right: 8px; }
+.px-3     { padding-left: 12px; padding-right: 12px; }
+
+/* Text */
+.text-xs         { font-size: 12px; line-height: 1.5; }
+.text-sm         { font-size: 13px; line-height: 1.5; }
+.text-\[10px\]   { font-size: 10px; }
+.text-\[11px\]   { font-size: 11px; }
+.text-red-700    { color: #B91C1C; }
+.text-left       { text-align: left; }
+.font-medium     { font-weight: 500; }
+.font-semibold   { font-weight: 600; }
+.font-mono       { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Courier New", monospace; }
+.tracking-wide   { letter-spacing: 0.025em; }
+.uppercase       { text-transform: uppercase; }
+.italic          { font-style: italic; }
+.leading-relaxed { line-height: 1.625; }
+
+/* Background */
+.bg-black\/40 { background: rgba(0, 0, 0, 0.4); }
+.bg-red-50    { background: #FEF2F2; }
+
+/* Border */
+.border           { border: 1px solid var(--if-line); }
+.border-b         { border-bottom: 1px solid var(--if-line); }
+.border-t         { border-top: 1px solid var(--if-line); }
+.border-l-2       { border-left: 2px solid var(--if-line); }
+.border-collapse  { border-collapse: collapse; }
+.border-red-200   { border-color: #FECACA; }
+
+/* Rounded corners */
+.rounded    { border-radius: 4px; }
+.rounded-md { border-radius: 6px; }
+
+/* Opacity */
+.opacity-60 { opacity: 0.6; }
+
+/* Misc */
+.transition-colors      { transition: color 0.15s, background 0.15s, border-color 0.15s; }
+.hover\:underline:hover { text-decoration: underline; }
+.disabled\:opacity-60:disabled { opacity: 0.6; }
+.overflow-auto          { overflow: auto; }
+.overflow-x-auto        { overflow-x: auto; }
+.pointer-events-none    { pointer-events: none; }
+.cursor-pointer         { cursor: pointer; }
+.align-top              { vertical-align: top; }
+.whitespace-pre-wrap    { white-space: pre-wrap; }
+.list-disc     { list-style-type: disc; padding-left: 20px; }
+.list-decimal  { list-style-type: decimal; padding-left: 20px; }
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ==========================================================================
+   Prose-bcc — markdown body styling for SystemMap.jsx page detail view
+   ========================================================================== */
+
+.prose-bcc {
+  font-size: 14px;
+  color: var(--if-slate-700);
+  line-height: 1.65;
+}
+.prose-bcc h1, .prose-bcc h2, .prose-bcc h3, .prose-bcc h4 {
+  color: var(--if-navy);
+  font-weight: 600;
+  margin: 20px 0 8px;
+  line-height: 1.3;
+}
+.prose-bcc h1 { font-size: 20px; }
+.prose-bcc h2 { font-size: 17px; }
+.prose-bcc h3 { font-size: 15px; }
+.prose-bcc h4 { font-size: 14px; }
+.prose-bcc p { margin: 8px 0; }
+.prose-bcc code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Courier New", monospace;
+  background: var(--if-slate-100);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12.5px;
+  color: var(--if-navy);
+}
+.prose-bcc pre {
+  background: var(--if-slate-100);
+  border: 1px solid var(--if-line);
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.prose-bcc pre code { background: transparent; padding: 0; font-size: 12.5px; }
+.prose-bcc a { color: var(--if-blue); text-decoration: underline; }
+.prose-bcc a:hover { text-decoration: none; }
+.prose-bcc ul, .prose-bcc ol { padding-left: 24px; margin: 8px 0; }
+.prose-bcc li { margin: 3px 0; }
+.prose-bcc blockquote {
+  border-left: 3px solid var(--if-slate-400);
+  padding-left: 12px;
+  margin: 8px 0;
+  color: var(--if-muted);
+  font-style: italic;
+}
+.prose-bcc table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+.prose-bcc th, .prose-bcc td { border: 1px solid var(--if-line); padding: 6px 10px; font-size: 13px; }
+.prose-bcc th { background: var(--if-slate-100); text-align: left; font-weight: 600; color: var(--if-navy); }
+.prose-bcc hr { border: 0; border-top: 1px solid var(--if-line); margin: 12px 0; }
+
+/* Playbook-specific animation for its expand/collapse chevron */
+.playbook-chevron { transition: transform 0.2s ease; }
