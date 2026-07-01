@@ -11,9 +11,10 @@
     "prebuild": "node tools/schema-audit.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "lucide-react": "^1.23.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "@supabase/supabase-js": "^2.39.0"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.0",
