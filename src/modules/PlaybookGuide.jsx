@@ -390,7 +390,7 @@ function makeHighlighter(q) {
   };
 }
 
-function Section({ section, query, forceOpen, highlight }) {
+function Section({ section, query, isOpen, onToggle, highlight }) {
   const { visiblePrompts, visibleSubsections, totalCount } = useMemo(() => {
     if (section.subsections) {
       const subs = section.subsections
@@ -415,7 +415,7 @@ function Section({ section, query, forceOpen, highlight }) {
   if (query && isCalloutOnly && !calloutMatches) return null;
 
   return (
-    <details open={forceOpen} style={{ marginBottom: '16px', backgroundColor: 'var(--if-surface)', border: '1px solid var(--if-line)', borderRadius: '12px', overflow: 'hidden' }}>
+    <details open={isOpen} onToggle={(e) => onToggle(e.currentTarget.open)} style={{ marginBottom: '16px', backgroundColor: 'var(--if-surface)', border: '1px solid var(--if-line)', borderRadius: '12px', overflow: 'hidden' }}>
       <summary style={{ padding: '18px 20px', cursor: 'pointer', listStyle: 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', backgroundColor: 'var(--if-cream)', borderBottom: '1px solid var(--if-line)' }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 700, fontSize: '17px', color: 'var(--if-navy)', marginBottom: '4px' }}>
@@ -467,9 +467,25 @@ function Section({ section, query, forceOpen, highlight }) {
 
 export default function PlaybookGuide() {
   const [query, setQuery] = useState('');
-  const [expandAll, setExpandAll] = useState(false);
+  const [openIds, setOpenIds] = useState(() => {
+    const first = PLAYBOOK_DATA[0]?.id;
+    return first ? new Set([first]) : new Set();
+  });
 
-  const forceOpenAll = query.trim().length > 0 || expandAll;
+  const allOpen = openIds.size === PLAYBOOK_DATA.length;
+
+  const handleSectionToggle = (id, open) => {
+    setOpenIds((prev) => {
+      const next = new Set(prev);
+      if (open) next.add(id); else next.delete(id);
+      return next;
+    });
+  };
+
+  const handleExpandCollapseAll = () => {
+    if (allOpen) setOpenIds(new Set());
+    else setOpenIds(new Set(PLAYBOOK_DATA.map((s) => s.id)));
+  };
   const highlight = useMemo(() => makeHighlighter(query.trim()), [query]);
 
   const totalPrompts = useMemo(() => {
@@ -539,9 +555,9 @@ export default function PlaybookGuide() {
               </button>
             )}
           </div>
-          <button type="button" className="if-button-ghost text-sm" onClick={() => setExpandAll((v) => !v)} disabled={query.trim().length > 0} title={query ? 'Search is active — sections auto-expand for matches' : ''}>
-            {expandAll ? <ChevronsUp size={14} /> : <ChevronsDown size={14} />}
-            {expandAll ? 'Collapse all' : 'Expand all'}
+          <button type="button" className="if-button-ghost text-sm" onClick={handleExpandCollapseAll} disabled={query.trim().length > 0} title={query ? 'Search is active — sections auto-expand for matches' : ''}>
+            {allOpen ? <ChevronsUp size={14} /> : <ChevronsDown size={14} />}
+            {allOpen ? 'Collapse all' : 'Expand all'}
           </button>
         </div>
         <div style={{ fontSize: '12px', color: 'var(--if-muted)', marginTop: '8px', paddingLeft: '2px' }}>
@@ -552,12 +568,13 @@ export default function PlaybookGuide() {
       </div>
 
       <div>
-        {PLAYBOOK_DATA.map((section, idx) => (
+        {PLAYBOOK_DATA.map((section) => (
           <Section
             key={section.id}
             section={section}
             query={query.trim()}
-            forceOpen={forceOpenAll || (idx === 0 && !query.trim())}
+            isOpen={query.trim().length > 0 ? true : openIds.has(section.id)}
+            onToggle={(open) => handleSectionToggle(section.id, open)}
             highlight={highlight}
           />
         ))}
