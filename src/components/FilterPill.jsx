@@ -1,17 +1,31 @@
-// FilterPill — clickable pill for filter chips (category filters, status chips, etc.)
-// Minimal implementation authored 2026-07-01 to unblock the retrofit build.
-// Interface matches SystemMap usage: <FilterPill active={bool} onClick={fn}>{children}</FilterPill>.
+// FilterPill — clickable pill button, inline-styled. Used for category filter
+// chips in SystemMap.jsx.
+
+const BASE = {
+  display: "inline-flex", alignItems: "center", gap: 4,
+  padding: "5px 12px",
+  borderRadius: 999,
+  fontSize: 12, fontWeight: 500,
+  cursor: "pointer",
+  transition: "background 0.15s, border-color 0.15s, color 0.15s",
+  border: "1px solid #E2E8F0",
+};
+
+const ACTIVE = {
+  background: "#2D7DD2", color: "#FFFFFF", borderColor: "#2D7DD2",
+};
+const IDLE = {
+  background: "#FFFFFF", color: "#64748B",
+};
+const DISABLED = { opacity: 0.5, cursor: "not-allowed" };
 
 export default function FilterPill({ active = false, onClick, children, disabled = false }) {
-  const base = "inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium transition border";
-  const activeCls = "bg-if-accent text-white border-if-accent";
-  const idleCls = "bg-white text-if-muted border-if-border hover:border-if-accent hover:text-if-text";
-  const disabledCls = "opacity-50 cursor-not-allowed";
+  const style = { ...BASE, ...(active ? ACTIVE : IDLE), ...(disabled ? DISABLED : {}) };
   return (
     <button
       type="button"
       onClick={disabled ? undefined : onClick}
-      className={`${base} ${active ? activeCls : idleCls} ${disabled ? disabledCls : ""}`}
+      style={style}
       disabled={disabled}
     >
       {children}

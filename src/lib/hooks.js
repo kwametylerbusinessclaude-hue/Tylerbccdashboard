@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { supabase } from "./supabase.js";
 
 /**
@@ -55,12 +55,17 @@ export function useSupabaseTable(tableName, agencyId, options = {}) {
 
 /**
  * useSupabaseQuery — run a custom Supabase query
- * Usage: const { data, loading } = useSupabaseQuery(() => supabase.from("x").select("y"))
+ * Usage: const { data, loading, error, refetch } = useSupabaseQuery(() => supabase.from("x").select("y"))
+ *
+ * Returns a stable `refetch` fn that triggers a re-run. Required by
+ * SystemMap.jsx and any other module that wants to re-pull after a mutation
+ * (e.g. after a Verified-now bump).
  */
 export function useSupabaseQuery(queryFn, deps = []) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,7 +85,12 @@ export function useSupabaseQuery(queryFn, deps = []) {
     }
     run();
     return () => { cancelled = true; };
-  }, deps);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [...deps, refreshTick]);
 
-  return { data, loading, error };
+  const refetch = useCallback(() => {
+    setRefreshTick((t) => t + 1);
+  }, []);
+
+  return { data, loading, error, refetch };
 }

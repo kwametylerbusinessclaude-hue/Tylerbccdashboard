@@ -1,40 +1,26 @@
-// AskClaudeButton — opens a fresh Claude.ai conversation pre-loaded with
-// the module's context and a suggested prompt, so the operator can pick up
-// the thread outside the app without retyping.
+// AskClaudeButton — copies module context + prompt to clipboard, then opens
+// claude.ai in a new tab. Inline-styled to match the fork.
 //
-// Minimal implementation authored 2026-07-01 to unblock the retrofit build
-// after PlaybookGuide.jsx + SystemMap.jsx landed importing this component.
-// Interface matches BOTH module usages:
-//
-//   SystemMap:
-//     <AskClaudeButton
-//       moduleLabel="System Map"
-//       subject={`Wiki page: ${page.title} (${page.slug})`}
-//       context={{...}}
-//       suggestedPrompt="Help me work through what's on this BCC wiki page..."
-//     />
-//
-//   PlaybookGuide:
-//     <AskClaudeButton
-//       moduleLabel="Playbook & Guide"
-//       subject={heading + ' — ' + prompt.title}
-//       suggestedPrompt={prompt.prompt}
-//       label="Try in Claude"
-//       variant="solid"
-//     />
-//
-// Behavior: click assembles a plain-text message containing
-//   [Module] moduleLabel · Subject: subject
-//   [Context] pretty-printed JSON (if provided)
-//   [Prompt]  suggestedPrompt
-// puts it on the clipboard, and opens claude.ai in a new tab. The operator
-// pastes into their existing Claude project (which has all the MCP tools).
-// This is intentionally a hand-off — we don't try to auto-load context via
-// URL params because Claude.ai's URL param interface for pre-filled prompts
-// isn't stable across releases.
+// Two variants:
+//   variant="ghost" (default) — subtle bordered button
+//   variant="solid"           — filled blue button (used by PlaybookGuide's "Try in Claude")
 
 import { useState } from 'react';
 import { MessageSquare, Check } from 'lucide-react';
+
+const BASE = {
+  display: "inline-flex", alignItems: "center", gap: 4,
+  padding: "5px 10px",
+  borderRadius: 6,
+  fontSize: 12, fontWeight: 500,
+  cursor: "pointer",
+  transition: "background 0.15s, border-color 0.15s",
+  border: "1px solid transparent",
+  whiteSpace: "nowrap",
+};
+const GHOST = { ...BASE, color: "#334155", background: "#FFFFFF", borderColor: "#E2E8F0" };
+const SOLID = { ...BASE, color: "#FFFFFF", background: "#2D7DD2", borderColor: "#2D7DD2" };
+const COPIED_TINT = { background: "#D1FAE5", borderColor: "#10B981", color: "#065F46" };
 
 function buildHandoffText({ moduleLabel, subject, context, suggestedPrompt }) {
   const parts = [];
@@ -57,7 +43,7 @@ export default function AskClaudeButton({
   context,
   suggestedPrompt,
   label = "Ask Claude",
-  variant = "ghost", // "solid" | "ghost"
+  variant = "ghost",
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -74,26 +60,23 @@ export default function AskClaudeButton({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
-    // Open Claude in a new tab. window.open may pop-up-block on some browsers;
-    // fall back to same-tab navigation only if pop-up blocked.
     try {
       const w = window.open('https://claude.ai/new', '_blank', 'noopener,noreferrer');
       if (!w) window.location.assign('https://claude.ai/new');
     } catch { window.location.assign('https://claude.ai/new'); }
   };
 
-  const cls = variant === "solid"
-    ? "if-button text-xs inline-flex items-center gap-1"
-    : "if-button-ghost text-xs inline-flex items-center gap-1";
+  let style = variant === "solid" ? SOLID : GHOST;
+  if (copied) style = { ...style, ...COPIED_TINT };
 
   return (
     <button
       type="button"
       onClick={handleClick}
-      className={cls}
+      style={style}
       title="Copies context + prompt to your clipboard, then opens Claude.ai in a new tab. Paste into your BCC project."
     >
-      {copied ? <Check size={14} /> : <MessageSquare size={14} />}
+      {copied ? <Check size={13} /> : <MessageSquare size={13} />}
       {copied ? "Copied — paste in Claude" : label}
     </button>
   );

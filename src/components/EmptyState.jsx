@@ -2,8 +2,13 @@ import { useState } from "react";
 
 /**
  * EmptyState — shown when a table has 0 rows
- * Tells Dominique exactly what's missing and how to add it
+ * Tells the operator exactly what's missing and how to add it
  * Never shows fake/mock data
+ *
+ * `icon` accepts a string (emoji) OR a React component (e.g. a lucide-react
+ * icon). If a component is passed, it renders <Icon size={36} />; otherwise
+ * the string is displayed as-is. This defensive handling is what prevents
+ * React error #31 when retrofit modules pass forwardRef icons here.
  */
 export default function EmptyState({
   icon = "📋",
@@ -35,6 +40,18 @@ export default function EmptyState({
   const displayTitle = title || defaults.title || "No data yet";
   const displayDesc = description || defaults.desc || "This section will populate as you use your BCC.";
 
+  // Defensive: detect whether displayIcon is a React component (function or
+  // forwardRef/memo object with $$typeof) vs. a plain string emoji. This is
+  // what prevents React error #31 when retrofit modules pass lucide-react
+  // icons here (they're forwardRef objects; rendering them raw crashes React).
+  const isComponent =
+    typeof displayIcon === "function" ||
+    (typeof displayIcon === "object" &&
+      displayIcon !== null &&
+      displayIcon.$$typeof);
+
+  const IconComponent = isComponent ? displayIcon : null;
+
   return (
     <div style={{
       display: "flex", flexDirection: "column", alignItems: "center",
@@ -52,7 +69,9 @@ export default function EmptyState({
         </div>
       )}
 
-      <div style={{ fontSize: 36, marginBottom: 12 }}>{displayIcon}</div>
+      <div style={{ fontSize: 36, marginBottom: 12, color: "#94A3B8" }}>
+        {IconComponent ? <IconComponent size={36} /> : displayIcon}
+      </div>
 
       <div style={{
         fontSize: 15, fontWeight: 600, color: "#1E293B", marginBottom: 8

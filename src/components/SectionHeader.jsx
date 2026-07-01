@@ -1,24 +1,31 @@
-// SectionHeader — top-of-page block for a module with icon + title + subtitle.
-// Minimal implementation authored 2026-07-01 to unblock the retrofit build
-// after PlaybookGuide.jsx + SystemMap.jsx landed importing a shared component
-// that didn't exist in this fork. Interface matches how SystemMap uses it.
+// SectionHeader — icon + title + subtitle module header, inline-styled
+// to match the fork's design tokens (matches BCCApp.jsx TOKENS palette).
 //
-// Usage:
-//   <SectionHeader title="..." subtitle="..." icon={LucideIconComponent} />
+// Usage: <SectionHeader title="..." subtitle="..." icon={LucideIconComponent} />
+
+const S = {
+  wrap:    { display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 4 },
+  iconBox: {
+    flexShrink: 0, width: 36, height: 36, borderRadius: 8,
+    background: "#EFF6FF", color: "#2D7DD2",
+    display: "flex", alignItems: "center", justifyContent: "center",
+  },
+  text:     { minWidth: 0, flex: 1 },
+  title:    { fontSize: 17, fontWeight: 600, color: "#1B2B4B", lineHeight: 1.2, margin: 0 },
+  subtitle: { fontSize: 12, color: "#64748B", marginTop: 2, lineHeight: 1.5 },
+};
 
 export default function SectionHeader({ title, subtitle, icon: Icon }) {
   return (
-    <div className="flex items-start gap-3 mb-1">
+    <div style={S.wrap}>
       {Icon ? (
-        <div className="flex-shrink-0 w-9 h-9 rounded-lg bg-if-accent-soft flex items-center justify-center text-if-accent">
+        <div style={S.iconBox}>
           <Icon size={18} />
         </div>
       ) : null}
-      <div className="min-w-0 flex-1">
-        <h2 className="text-lg font-semibold text-if-text leading-tight">{title}</h2>
-        {subtitle ? (
-          <p className="text-xs text-if-muted mt-0.5 leading-snug">{subtitle}</p>
-        ) : null}
+      <div style={S.text}>
+        <h2 style={S.title}>{title}</h2>
+        {subtitle ? <p style={S.subtitle}>{subtitle}</p> : null}
       </div>
     </div>
   );
